@@ -231,37 +231,10 @@ def load_env_file(path: Path) -> None:
 
 load_env_file(ENV_FILE)
 
-SESSION_CACHE_FILE = BASE_DIR / ".ct_session"
-CT_COOKIE = os.getenv("CT_COOKIE", "")
-CT_CSRF_TOKEN = os.getenv("CT_CSRF_TOKEN", "")
-
-def load_session_cache() -> None:
-    global CT_COOKIE, CT_CSRF_TOKEN
-    if SESSION_CACHE_FILE.exists():
-        try:
-            for raw_line in SESSION_CACHE_FILE.read_text().splitlines():
-                line = raw_line.strip()
-                if not line or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                k = k.strip()
-                v = v.strip()
-                if k == "CT_COOKIE":
-                    CT_COOKIE = v
-                elif k == "CT_CSRF_TOKEN":
-                    CT_CSRF_TOKEN = v
-        except Exception:
-            pass
-
-def save_session_cache(cookie: str, csrf: str) -> None:
-    try:
-        SESSION_CACHE_FILE.write_text(f"CT_COOKIE={cookie}\nCT_CSRF_TOKEN={csrf}\n")
-    except Exception:
-        pass
-
-load_session_cache()
 SHEET_ID = os.getenv("SHEET_ID", "")
 SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE", "service_account.json")
+CT_COOKIE = os.getenv("CT_COOKIE", "")
+CT_CSRF_TOKEN = os.getenv("CT_CSRF_TOKEN", "")
 CT_BASE_URL = os.getenv("CT_BASE_URL", "https://in1.dashboard.clevertap.com/W8W-6R9-885Z")
 CT_REFERER_URL = os.getenv(
     "CT_REFERER_URL",
@@ -696,7 +669,6 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
     
     CT_COOKIE = cookie_str
     CT_CSRF_TOKEN = csrf_cookie_val
-    save_session_cache(cookie_str, csrf_cookie_val)
     
     init_requests_session()
     print("CleverTap session refreshed successfully!")
