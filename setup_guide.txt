@@ -1,0 +1,263 @@
+CleverTap Journey Stats Automation - Setup Guide
+================================================
+
+What We Built
+-------------
+This Python script runs automatically every day at 11:00 AM and pulls
+WhatsApp campaign stats for all Club Mahindra journey nodes from CleverTap,
+then writes them into Google Sheets.
+
+It removes the need to manually open each node in the CleverTap dashboard and
+copy Sent, Delivered, Viewed, and Clicked numbers into a spreadsheet.
+
+
+Problem It Solves
+-----------------
+Before this automation, the process was:
+
+1. Open CleverTap
+2. Open each journey node one by one
+3. Read the performance trend stats
+4. Enter the numbers into Google Sheets manually
+
+That took around 30 to 40 minutes every day and was easy to get wrong.
+
+This script automates that entire workflow.
+
+
+How It Works
+------------
+1. CleverTap internal API
+   The script calls the same internal dashboard API used by CleverTap's node
+   stats popup and performance trend graph:
+   calculateTrend.html
+
+2. Browser cookie authentication
+   CleverTap is accessed through Google SSO, so there is no simple username /
+   password flow for this script.
+
+   Instead, the script uses:
+   - the browser session cookie
+   - the x-clevertap-csrf-token header
+
+   These are copied from Chrome DevTools and pasted into a local .env file.
+
+3. Daily stat extraction
+   CleverTap returns trend data grouped by date. The script reads today's date
+   from that response and extracts:
+   - Sent
+   - Delivered
+   - Viewed
+   - Clicked
+
+4. Google Sheets write
+   The script connects to Google Sheets using a service account and appends one
+   row per node per day.
+
+5. Daily scheduler
+   A Mac cron job runs the script automatically every day at 11:00 AM.
+
+
+Journeys Covered
+----------------
+- Day0
+- Day5
+- Day15
+- Day05_Segments
+- Day20_Segments
+- Day30_Segments
+- Day60_Segments
+
+The first three tabs cover resort-wise journeys. The segment tabs cover
+SameState, DifferentState, and International style campaign nodes.
+
+
+Output Format
+-------------
+The Google Sheet contains 3 tabs:
+- Day0
+- Day5
+- Day15
+- Day05_Segments
+- Day20_Segments
+- Day30_Segments
+- Day60_Segments
+
+Each run appends one row per node with:
+- Date
+- Node Name
+- Campaign ID
+- Sent
+- Delivered
+- Viewed
+- Clicked
+
+The script also formats each tab with:
+- Frozen header row
+- Filters
+- Bold dark header
+- Center-aligned metric columns
+- Wider node-name column
+- Colored sheet tabs
+
+
+Tech Stack
+----------
+- Python
+- requests
+- gspread
+- Google Sheets service account
+- CleverTap internal dashboard API
+- Mac cron
+
+
+One-Time Setup
+--------------
+1. Install dependencies
+
+   pip3 install -r requirements.txt
+
+   Or install packages directly:
+
+   pip3 install requests gspread google-auth
+
+2. Create a local config file
+
+   Copy .env.example to .env in this folder:
+
+   cp .env.example .env
+
+   This keeps session cookies and other runtime config out of the Python code.
+
+3. Create a Google Cloud service account
+
+   - Go to https://console.cloud.google.com
+   - Create or select a Google Cloud project
+   - Enable Google Sheets API
+   - Enable Google Drive API
+   - Create a service account
+   - Create a JSON key
+   - Download the JSON file
+   - Place it in this folder as:
+
+     service_account.json
+
+4. Share the Google Sheet with the service account
+
+   Open service_account.json and copy the client_email value, then share the
+   target Google Sheet with that email as Editor.
+
+5. Set the Google Sheet ID
+
+   Open .env and set SHEET_ID.
+
+   To find it, open the Google Sheet URL and copy the value between /d/ and
+   /edit.
+
+6. Add the journey node and campaign IDs
+
+   Update the JOURNEYS dictionary in clevertap_stats.py with the correct node
+   names and CleverTap campaign IDs for:
+   - Day0
+   - Day5
+   - Day15
+
+
+How To Get Fresh CleverTap Cookies
+----------------------------------
+This is the only recurring maintenance task.
+
+1. Open CleverTap in Chrome
+2. Open any journey node stats popup
+3. Open DevTools with Cmd+Option+I
+4. Go to Network
+5. Filter to Fetch/XHR if needed
+6. Click the calculateTrend.html request
+7. Copy the full cookie header value
+8. Copy the x-clevertap-csrf-token value
+9. Paste them into .env:
+   - CT_COOKIE
+   - CT_CSRF_TOKEN
+
+Why this is needed:
+- CleverTap uses Google SSO
+- Public API access returns unusable data for these live journeys
+- The internal dashboard API works, but it requires an active logged-in session
+
+
+Maintenance
+-----------
+Session cookies usually expire roughly once every 7 days.
+
+When that happens, the script prints an authentication error. Refresh the
+cookie and CSRF token from DevTools and paste the new values into .env.
+
+This takes about 2 minutes.
+
+
+Manual Test Run
+---------------
+From Terminal:
+
+cd /Users/naman/Desktop/clevertap
+./.venv/bin/python3 clevertap_stats.py
+
+Expected behavior:
+- Connects to Google Sheets
+- Pulls stats for all configured tabs
+- Appends rows to the matching tabs
+- Prints per-node progress in the terminal
+
+To run only selected tabs, pass the tab names:
+
+./.venv/bin/python3 clevertap_stats.py Day05_Segments Day20_Segments
+
+To backfill a specific date, use --date with YYYY-MM-DD:
+
+./.venv/bin/python3 clevertap_stats.py --date 2026-05-18 Day05_Segments Day20_Segments Day30_Segments Day60_Segments
+
+
+Mac Cron Setup
+--------------
+1. Open Terminal
+2. Run:
+
+   crontab -e
+
+3. Add this line:
+
+   0 11 * * * /Users/naman/Desktop/clevertap/.venv/bin/python3 /Users/naman/Desktop/clevertap/clevertap_stats.py >> /Users/naman/Desktop/clevertap/ct_stats.log 2>&1
+
+This runs the script every day at 11:00 AM and writes output to ct_stats.log.
+
+
+Recommended Folder Structure
+----------------------------
+clevertap/
+|- .env
+|- .env.example
+|- clevertap_stats.py
+|- requirements.txt
+|- setup_guide.txt
+|- service_account.json
+|- ct_stats.log
+
+
+Troubleshooting
+---------------
+1. Session expired / HTTP 401 / HTTP 403
+   Refresh CT_COOKIE and CT_CSRF_TOKEN from Chrome DevTools.
+
+2. service_account.json not found
+   Make sure the JSON key file exists in this folder or update the path in the
+   script.
+
+3. Permission error writing to Google Sheets
+   Share the sheet with the service account email as Editor.
+
+4. All stats show as 0
+   Check that the campaign IDs are correct and that the selected date has live
+   data in CleverTap.
+
+5. Cron job does not run
+   Use absolute paths in the cron entry and check ct_stats.log for errors.

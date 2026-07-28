@@ -1,0 +1,9 @@
+.env
+service_account.json
+ct_stats.log
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.playwright_user_data/
+
