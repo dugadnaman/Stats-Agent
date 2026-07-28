@@ -254,7 +254,6 @@ SHEETS_READ_TIMEOUT_SECONDS = float(os.getenv("SHEETS_READ_TIMEOUT_SECONDS", "20
 
 
 HEADED_MODE = False
-session_client = requests.Session()
 playwright_instance = None
 context_instance = None
 page_instance = None
@@ -271,21 +270,7 @@ def close_browser_at_exit() -> None:
 
 atexit.register(close_browser_at_exit)
 
-def init_requests_session() -> None:
-    global CT_COOKIE, CT_CSRF_TOKEN, session_client
-    session_client.cookies.clear()
-    
-    if CT_COOKIE:
-        for cookie_part in CT_COOKIE.split(";"):
-            cookie_part = cookie_part.strip()
-            if not cookie_part or "=" not in cookie_part:
-                continue
-            name, val = cookie_part.split("=", 1)
-            if val.startswith('"') and val.endswith('"'):
-                val = val[1:-1]
-            session_client.cookies.set(name, val, domain="in1.dashboard.clevertap.com")
-            
-    print("Initialized requests session with current cookies.")
+# init_requests_session deprecated and removed
 
 
 class CleverTapAuthError(Exception):
@@ -378,11 +363,14 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
         
         if not skip_logout:
             print("Force-signing out of Google account to show the complete login flow to the manager...")
-            page.goto("https://accounts.google.com/Logout")
+            try:
+                page.goto("https://accounts.google.com/Logout", timeout=15000)
+            except Exception as e:
+                print(f"Google logout warning: {e}")
             page.wait_for_timeout(3000)
             
         print(f"Navigating to dashboard: {url}")
-        page.goto(url)
+        page.goto(url, timeout=30000)
         page.wait_for_timeout(3000)
         
         current_url = page.url
@@ -626,7 +614,6 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
     CT_COOKIE = cookie_str
     CT_CSRF_TOKEN = csrf_cookie_val
     
-    init_requests_session()
     print("CleverTap session refreshed successfully!")
 
 
@@ -716,158 +703,111 @@ def append_rows_with_retry(worksheet: gspread.Worksheet, rows: list[list[object]
 
 
 def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
-    global page_instance
+    global page_instance, HEADED_MODE
     
-    # 1. Primary Method: Browser Network Interception
-    if page_instance:
+    print(f"  [BROWSER SCRAPER] Scraping stats for campaign {campaign_id}...")
+    
+    if not page_instance:
+        refresh_clevertap_session(headed=HEADED_MODE, skip_logout=True)
+        
+    report_url = f"{CT_BASE_URL}/campaigns/campaign/{campaign_id}/report/stats"
+    
+    # We will attempt up to 2 times in case of session expiration / reload
+    for attempt in range(2):
         try:
-            report_url = f"{CT_BASE_URL}/notification/reports.html?id={campaign_id}"
+            print(f"    Navigating to stats URL: {report_url}")
+            page_instance.goto(report_url, wait_until="domcontentloaded", timeout=30000)
             
-            captured_payload = None
-            def handle_response(response):
-                nonlocal captured_payload
-                if "calculateTrend" in response.url:
-                    try:
-                        captured_payload = response.json()
-                    except Exception:
-                        pass
-            
-            page_instance.on("response", handle_response)
-            
-            try:
-                page_instance.goto(report_url, wait_until="domcontentloaded", timeout=15000)
+            # Check for SSO redirect and auto-login
+            page_instance.wait_for_timeout(3000)
+            curr_url = page_instance.url
+            if "sso.clevertap.com" in curr_url or "google.com" in curr_url:
+                print("    Session expired. Re-authenticating automatically...")
+                refresh_clevertap_session(headed=HEADED_MODE, skip_logout=True)
+                continue
                 
-                # Check for SSO redirect and auto-login
-                curr_url = page_instance.url
-                if "sso.clevertap.com" in curr_url or "google.com" in curr_url:
-                    print("Browser session expired/logged out in headed window. Re-authenticating automatically...")
-                    refresh_clevertap_session(headed=HEADED_MODE, skip_logout=True)
-                    page_instance.goto(report_url, wait_until="domcontentloaded", timeout=15000)
+            # Wait for stats cards to load and populate
+            sent_count_locator = page_instance.locator('[data-testid="hero-card-sent-card"] .stats-card-count')
+            sent_count_locator.wait_for(state="visible", timeout=15000)
+            
+            # Wait for text to be populated (not empty)
+            for _ in range(50):
+                val = sent_count_locator.inner_text().strip()
+                if val:
+                    break
+                page_instance.wait_for_timeout(100)
+            
+            # Scrape Sent
+            sent_text = page_instance.locator('[data-testid="hero-card-sent-card"] .stats-card-count').inner_text().strip()
+            
+            # Scrape Delivered
+            del_card = page_instance.locator('[data-testid="hero-card-delivered-card"]')
+            del_sec = del_card.locator('.stats-card-secondary-count')
+            if del_sec.is_visible():
+                del_text = del_sec.inner_text().strip()
+            else:
+                del_text = del_card.locator('.stats-card-count').inner_text().strip()
                 
-                # Wait up to 5 seconds to capture the network response
-                for _ in range(5):
-                    if captured_payload:
-                        break
-                    page_instance.wait_for_timeout(1000)
-            finally:
+            # Scrape Viewed
+            view_card = page_instance.locator('[data-testid="hero-card-viewed-card"]')
+            view_sec = view_card.locator('.stats-card-secondary-count')
+            if view_sec.is_visible():
+                view_text = view_sec.inner_text().strip()
+            else:
+                view_text = view_card.locator('.stats-card-count').inner_text().strip()
+                
+            # Scrape Clicks
+            clicks_card = page_instance.locator('[data-testid="hero-card-clicks-card"]')
+            clicks_sec = clicks_card.locator('.stats-card-secondary-count')
+            if clicks_sec.is_visible():
+                clicks_text = clicks_sec.inner_text().strip()
+            else:
+                clicks_text = clicks_card.locator('.stats-card-count').inner_text().strip()
+                
+            # Clean and parse helper
+            def parse_val(text: str) -> int | str:
+                clean = text.replace(",", "").replace("%", "").strip()
+                if not clean or clean.lower() == "na":
+                    return 0
                 try:
-                    page_instance.remove_listener("response", handle_response)
+                    return int(clean)
+                except ValueError:
+                    try:
+                        return int(float(clean))
+                    except ValueError:
+                        return text
+                        
+            sent_val = parse_val(sent_text)
+            del_val = parse_val(del_text)
+            view_val = parse_val(view_text)
+            click_val = parse_val(clicks_text)
+            
+            print(f"    [BROWSER SCRAPER] Successfully scraped: Sent={sent_val} | Delivered={del_val} | Viewed={view_val} | Clicked={click_val}")
+            
+            return {
+                "sent": sent_val,
+                "delivered": del_val,
+                "viewed": view_val,
+                "clicked": click_val
+            }
+            
+        except Exception as e:
+            print(f"    Warning: Browser scraping attempt {attempt + 1} failed: {e}")
+            if attempt == 0:
+                print("    Retrying navigation after potential session refresh...")
+                try:
+                    refresh_clevertap_session(headed=HEADED_MODE, skip_logout=True)
                 except Exception:
                     pass
-            
-            if captured_payload and captured_payload.get("success") is not False:
-                daily_data = captured_payload.get("All")
-                if isinstance(daily_data, dict) and today_str in daily_data:
-                    today_entry = daily_data[today_str]
-                    if isinstance(today_entry, dict):
-                        return {
-                            "sent": today_entry.get("sent", 0),
-                            "delivered": today_entry.get("delivered", 0),
-                            "viewed": today_entry.get("viewed", 0),
-                            "clicked": today_entry.get("clicked", 0),
-                        }
-        except Exception as e:
-            print(f"    Warning: Browser-based extraction failed: {e}. Falling back to requests API...")
-            
-    # 2. Secondary Method: Python requests session (Fallback)
-    url = f"{CT_BASE_URL}/json/notification/calculateTrend.html"
-    data = {"id": campaign_id, "from": CT_FROM_DATE, "to": today_str}
-    session_refreshed = False
-
-    for attempt in range(API_MAX_RETRIES):
-        try:
-            current_csrf = session_client.cookies.get("csrf", default=CT_CSRF_TOKEN)
-            headers = {
-                "accept": "application/json, text/plain, */*",
-                "content-type": "application/x-www-form-urlencoded",
-                "origin": "https://in1.dashboard.clevertap.com",
-                "referer": CT_REFERER_URL,
-                "x-clevertap-csrf-token": current_csrf,
-                "user-agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/148.0.0.0 Safari/537.36"
-                ),
-            }
-            resp = session_client.post(url, headers=headers, data=data, params={"uc": "1"}, timeout=30)
-            if resp.status_code in [401, 403]:
-                if not session_refreshed:
-                    print(f"    Warning: CleverTap session expired (HTTP {resp.status_code}). Attempting to refresh session...")
-                    refresh_clevertap_session(headed=HEADED_MODE)
-                    session_refreshed = True
-                    continue
-                else:
-                    raise CleverTapAuthError(
-                        f"Session expired (HTTP {resp.status_code}) even after session refresh."
-                    )
-            resp.raise_for_status()
-
-            try:
-                payload = resp.json()
-            except (ValueError, requests.exceptions.JSONDecodeError) as exc:
-                if not session_refreshed:
-                    print(f"    Warning: CleverTap response is not valid JSON. Attempting to refresh session... (Error: {exc})")
-                    refresh_clevertap_session(headed=HEADED_MODE)
-                    session_refreshed = True
-                    continue
-                else:
-                    raise CleverTapAuthError(
-                        "CleverTap response is not valid JSON even after session refresh. "
-                        f"Status: {resp.status_code}, Content: {resp.text[:500]}"
-                    )
-
-            if payload.get("success") is False:
-                if not session_refreshed:
-                    print(f"    Warning: CleverTap API returned success=false ({payload.get('error')}). Attempting to refresh session...")
-                    refresh_clevertap_session(headed=HEADED_MODE)
-                    session_refreshed = True
-                    continue
-                else:
-                    raise CleverTapAuthError(
-                        f"CleverTap API returned success=false ({payload.get('error')}) even after session refresh."
-                    )
-
-            daily_data = payload.get("All")
-            if not isinstance(daily_data, dict):
-                raise Exception("CleverTap response did not include the expected 'All' date data.")
-
-            if today_str not in daily_data:
-                raise Exception(f"CleverTap response did not include data for {today_str}.")
-
-            today_entry = daily_data[today_str]
-            if not isinstance(today_entry, dict):
-                raise Exception("CleverTap response for today was not a JSON object.")
-
-            return {
-                "sent": today_entry.get("sent", 0),
-                "delivered": today_entry.get("delivered", 0),
-                "viewed": today_entry.get("viewed", 0),
-                "clicked": today_entry.get("clicked", 0),
-            }
-        except CleverTapAuthError:
-            # Propagate critical authentication errors to terminate the script
-            raise
-        except requests.exceptions.RequestException as exc:
-            if attempt == API_MAX_RETRIES - 1:
-                print(f"    Warning: Error fetching campaign {campaign_id}: {exc}")
-                return {
-                    "sent": "ERROR",
-                    "delivered": "ERROR",
-                    "viewed": "ERROR",
-                    "clicked": "ERROR",
-                }
-
-            delay = retry_delay(attempt)
-            print(
-                f"    Warning: Network error for campaign {campaign_id} "
-                f"(attempt {attempt + 1}/{API_MAX_RETRIES}): {exc}. Retrying in {delay:.0f}s..."
-            )
-            time.sleep(delay)
-        except Exception as exc:
-            print(f"    Warning: Error fetching campaign {campaign_id}: {exc}")
-            return {"sent": "ERROR", "delivered": "ERROR", "viewed": "ERROR", "clicked": "ERROR"}
-
-    return {"sent": "ERROR", "delivered": "ERROR", "viewed": "ERROR", "clicked": "ERROR"}
+                continue
+                
+    print(f"  [BROWSER SCRAPER] Error: Failed to scrape campaign {campaign_id} via DOM.")
+    return {
+        "sent": "ERROR",
+        "delivered": "ERROR",
+        "viewed": "ERROR",
+        "clicked": "ERROR"
+    }
 
 
 def get_or_create_tab(sheet: gspread.Spreadsheet, tab_name: str) -> gspread.Worksheet:
@@ -1030,11 +970,11 @@ def parse_number_from_card(card_text: str) -> int:
 
 
 def scrape_journey_tab_from_browser(tab_name: str, campaigns: list[tuple[str, int]], run_date: str) -> dict[int, dict[str, int]]:
-    global page_instance
+    global page_instance, HEADED_MODE
     stats_map = {}
     
-    if not (HEADED_MODE and page_instance):
-        return stats_map
+    if not page_instance:
+        refresh_clevertap_session(headed=HEADED_MODE, skip_logout=True)
         
     try:
         print(f"\n[VISUAL SCRAPER] Starting canvas automation for tab: {tab_name}")
@@ -1074,51 +1014,98 @@ def scrape_journey_tab_from_browser(tab_name: str, campaigns: list[tuple[str, in
                 except Exception:
                     pass
                     
+        canvas_url = None
         if journey_row:
             link = journey_row.locator('a, div[role="link"]').first
-            link_text = link.inner_text()
-            print(f"[VISUAL SCRAPER] Clicking journey link: {link_text}")
-            link.click()
-            page_instance.wait_for_timeout(5000)
+            href = link.get_attribute("href")
+            if href:
+                import re
+                m = re.search(r'/journey/(\d+)', href)
+                if m:
+                    journey_id = m.group(1)
+                    canvas_url = f"{CT_BASE_URL}/journeys/journey/{journey_id}/report/node-stats"
+                    print(f"[VISUAL SCRAPER] Extracted Journey ID {journey_id}. Navigating directly to canvas: {canvas_url}")
+            if not canvas_url:
+                link_text = link.inner_text()
+                print(f"[VISUAL SCRAPER] Clicking journey link: {link_text}")
+                link.click()
+                page_instance.wait_for_timeout(5000)
         else:
             # Fallback directly using the search bar or locate via f'a:has-text("{tab_name}")'
             link = page_instance.locator(f'a:has-text("{tab_name}")').first
             if link.is_visible():
-                print(f"[VISUAL SCRAPER] Clicking fallback journey link containing: {tab_name}")
-                link.click()
-                page_instance.wait_for_timeout(5000)
+                href = link.get_attribute("href")
+                if href:
+                    import re
+                    m = re.search(r'/journey/(\d+)', href)
+                    if m:
+                        journey_id = m.group(1)
+                        canvas_url = f"{CT_BASE_URL}/journeys/journey/{journey_id}/report/node-stats"
+                        print(f"[VISUAL SCRAPER] Extracted Journey ID {journey_id} from fallback. Navigating directly to canvas: {canvas_url}")
+                if not canvas_url:
+                    print(f"[VISUAL SCRAPER] Clicking fallback journey link containing: {tab_name}")
+                    link.click()
+                    page_instance.wait_for_timeout(5000)
             else:
-                print(f"[VISUAL SCRAPER] Warning: Journey for {tab_name} not found in the list. Using API fallback.")
+                print(f"[VISUAL SCRAPER] Warning: Journey for {tab_name} not found in the list.")
                 return stats_map
                 
-        # 3. Click the Node Stats tab
-        print("[VISUAL SCRAPER] Navigating to Node Stats canvas...")
-        node_stats_tab = None
-        # Find all elements matching text "Node Stats" and locate the exact one
-        for el in page_instance.locator('text="Node Stats"').all():
-            try:
-                if el.inner_text().strip() == "Node Stats":
-                    node_stats_tab = el
-                    break
-            except Exception:
-                pass
-        if node_stats_tab:
-            node_stats_tab.click()
+        if canvas_url:
+            page_instance.goto(canvas_url, wait_until="domcontentloaded", timeout=20000)
+            page_instance.wait_for_timeout(5000)
         else:
-            page_instance.locator('text="Node Stats"').first.click()
-        page_instance.wait_for_timeout(5000)
+            # 3. Click the Node Stats tab
+            print("[VISUAL SCRAPER] Navigating to Node Stats canvas...")
+            node_stats_tab = None
+            for el in page_instance.locator('text="Node Stats"').all():
+                try:
+                    if el.inner_text().strip() == "Node Stats":
+                        node_stats_tab = el
+                        break
+                except Exception:
+                    pass
+            if node_stats_tab:
+                node_stats_tab.click()
+            else:
+                page_instance.locator('text="Node Stats"').first.click()
+            page_instance.wait_for_timeout(5000)
         
         # 4. Click each node and extract stats
         for campaign_name, campaign_id in campaigns:
             try:
                 print(f"  [VISUAL SCRAPER] Locating node: {campaign_name}...")
-                node = page_instance.get_by_text(campaign_name).last
+                
+                # Check different name candidates on canvas
+                node_candidates = [
+                    campaign_name,
+                    campaign_name.replace("_", " "),
+                    campaign_name.replace("WA_", "").replace("_", " "),
+                    campaign_name.replace("WA_", "").replace("_", " ").replace("Day", " Day"),
+                ]
+                
+                node = None
+                for candidate in node_candidates:
+                    loc = page_instance.get_by_text(candidate).last
+                    try:
+                        if loc.count() > 0:
+                            node = loc
+                            print(f"    Found node in canvas DOM using candidate name: '{candidate}'")
+                            break
+                    except Exception:
+                        pass
+                
+                if not node:
+                    raise Exception(f"Node element not found on canvas for candidates: {node_candidates}")
+                
                 node.scroll_into_view_if_needed(timeout=5000)
                 node.click()
                 page_instance.wait_for_timeout(2000)
                 
                 # Click Stats tab in the modal
                 stats_tab = None
+                stats_btn_locator = page_instance.locator('text="Stats"').last
+                stats_btn_locator.wait_for(state="visible", timeout=10000)
+                
                 for el in page_instance.locator('text="Stats"').all():
                     try:
                         if el.inner_text().strip() == "Stats":
@@ -1130,13 +1117,23 @@ def scrape_journey_tab_from_browser(tab_name: str, campaigns: list[tuple[str, in
                     stats_tab.click()
                 else:
                     page_instance.locator('text="Stats"').last.click()
-                page_instance.wait_for_timeout(2000)
+                
+                # Wait for metric value to be populated
+                sent_lbl_locator = page_instance.locator('div:has-text("Sent")').last
+                sent_lbl_locator.wait_for(state="visible", timeout=10000)
+                
+                for _ in range(50):
+                    if sent_lbl_locator.inner_text().strip():
+                        break
+                    page_instance.wait_for_timeout(100)
                 
                 # Extract text
                 sent_text = page_instance.locator('div:has-text("Sent")').last.inner_text()
                 delivered_text = page_instance.locator('div:has-text("Delivered")').last.inner_text()
                 viewed_text = page_instance.locator('div:has-text("Viewed")').last.inner_text()
-                clicks_text = page_instance.locator('div:has-text("Clicks")').last.inner_text()
+                
+                clicks_locator = page_instance.locator('div:has-text("Clicks"), div:has-text("Clicked")').last
+                clicks_text = clicks_locator.inner_text()
                 
                 # Parse numbers
                 sent_val = parse_number_from_card(sent_text)
@@ -1152,15 +1149,18 @@ def scrape_journey_tab_from_browser(tab_name: str, campaigns: list[tuple[str, in
                 }
                 print(f"    [VISUAL SCRAPER] Scraped: Sent={sent_val} | Delivered={del_val} | Viewed={view_val} | Clicked={click_val}")
                 
-                # Close modal
+                # Close modal and verify it is closed
                 done_btn = page_instance.locator('button:has-text("Done"), span:has-text("Done")').first
                 done_btn.click()
+                done_btn.wait_for(state="hidden", timeout=5000)
                 page_instance.wait_for_timeout(1000)
             except Exception as e:
-                print(f"    Warning: Failed to visually scrape node {campaign_name}: {e}. Will fallback to API.")
+                print(f"    Warning: Failed to visually scrape node {campaign_name}: {e}.")
                 # Attempt to close modal in case it was left open
                 try:
-                    page_instance.locator('button:has-text("Done"), span:has-text("Done")').first.click()
+                    done_btn = page_instance.locator('button:has-text("Done"), span:has-text("Done")').first
+                    done_btn.click()
+                    done_btn.wait_for(state="hidden", timeout=2000)
                 except Exception:
                     pass
                 
@@ -1183,7 +1183,7 @@ def write_daily_tab(sheet: gspread.Spreadsheet, tab_name: str, campaigns: list[t
             stats = scraped_stats[campaign_id]
             print(f"  Using visually scraped stats for {node_name} (Campaign ID: {campaign_id})...")
         else:
-            print(f"  Fetching {node_name} (Campaign ID: {campaign_id}) via API fallback...")
+            print(f"  Fetching {node_name} (Campaign ID: {campaign_id}) via browser standalone report fallback...")
             stats = get_todays_stats(campaign_id, run_date)
             
         rows.append([
@@ -1203,7 +1203,7 @@ def write_daily_tab(sheet: gspread.Spreadsheet, tab_name: str, campaigns: list[t
         time.sleep(1)
 
     if any("ERROR" in row[3:] for row in rows):
-        print(f"  Skipped writing to '{tab_name}' because one or more API calls failed\n")
+        print(f"  Skipped writing to '{tab_name}' because one or more stats extraction tasks failed\n")
         return
 
     if not append_rows_with_retry(worksheet, rows, tab_name):
@@ -1237,7 +1237,7 @@ def write_prospect_tab(sheet: gspread.Spreadsheet, tab_name: str, campaigns: lis
         )
 
     if any("ERROR" in row[3:] for row in rows):
-        print(f"  Skipped writing to '{tab_name}' because one or more API calls failed\n")
+        print(f"  Skipped writing to '{tab_name}' because one or more stats extraction tasks failed\n")
         return
 
     if not append_rows_with_retry(worksheet, rows, tab_name):
@@ -1269,11 +1269,8 @@ def run(date_value: str | None = None, tabs_value: str | None = None, headed: bo
 
     validate_config()
     
-    if not CT_COOKIE:
-        # Always refresh session via browser automation (ephemeral context, never persistent/cached)
-        refresh_clevertap_session(headed=HEADED_MODE, skip_logout=skip_logout, manual=manual)
-    else:
-        init_requests_session()
+    # Always refresh session via browser automation (ephemeral context, never persistent/cached)
+    refresh_clevertap_session(headed=HEADED_MODE, skip_logout=skip_logout, manual=manual)
 
     sheet_date, api_date = parse_run_date(date_value)
     requested_tabs = parse_tabs_filter(tabs_value)
