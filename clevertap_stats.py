@@ -670,6 +670,32 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
     CT_COOKIE = cookie_str
     CT_CSRF_TOKEN = csrf_cookie_val
     
+    # Save refreshed session cookies and CSRF token back to .env
+    try:
+        if ENV_FILE.exists():
+            env_content = ENV_FILE.read_text()
+            lines = env_content.splitlines()
+            cookie_replaced = False
+            csrf_replaced = False
+            for i, line in enumerate(lines):
+                if line.strip().startswith("CT_COOKIE="):
+                    lines[i] = f'CT_COOKIE="{cookie_str}"'
+                    cookie_replaced = True
+                elif line.strip().startswith("CT_CSRF_TOKEN="):
+                    lines[i] = f'CT_CSRF_TOKEN="{csrf_cookie_val}"'
+                    csrf_replaced = True
+            if not cookie_replaced:
+                lines.append(f'CT_COOKIE="{cookie_str}"')
+            if not csrf_replaced:
+                lines.append(f'CT_CSRF_TOKEN="{csrf_cookie_val}"')
+            ENV_FILE.write_text("\n".join(lines) + "\n")
+            print("Saved refreshed CleverTap session cookies to .env file.")
+        else:
+            ENV_FILE.write_text(f'CT_COOKIE="{cookie_str}"\nCT_CSRF_TOKEN="{csrf_cookie_val}"\n')
+            print("Created new .env file with refreshed CleverTap session cookies.")
+    except Exception as e:
+        print(f"Warning: Could not save refreshed cookies to .env: {e}")
+        
     init_requests_session()
     print("CleverTap session refreshed successfully!")
 

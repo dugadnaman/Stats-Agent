@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ops Console — CleverTap Daily Stats</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* ivory / brass premium palette */
+    --bg:#FBFAF6;
+    --panel:#FFFFFF;
+    --panel-2:#F4F1E8;
+    --line:#E4DECE;
+    --line-soft:#ECE7D9;
+    --text:#211F1B;
+    --text-dim:#6E6656;
+    --text-faint:#A79C86;
+
+    --accent:#93722F;        /* deep brass — headings, links */
+    --accent-ink:#211A0A;     /* text on filled gold buttons */
+    --accent-line:#B08D48;    /* gold border / ring */
+    --accent-tint:#F1E6C7;    /* light gold fill */
+
+    --steel:#3E5875;
+    --steel-tint:#E8EDF1;
+
+    --warn:#9C611C;
+    --warn-tint:#F0E0C6;
+
+    --err:#93362E;
+    --err-tint:#F2DCD8;
+
+    --shadow-sm:0 1px 2px rgba(33,31,27,.05);
+    --shadow-lg:0 14px 34px rgba(33,31,27,.06);
+
+    /* dark terminal — kept as a deliberate contrast element */
+    --log-bg:#15181D;
+    --log-line:#282D35;
+    --log-text:#ECEEF0;
+    --log-text-dim:#96A0AC;
+    --log-text-faint:#5C636E;
+    --log-gold:#D7BA82;
+    --log-warn:#E0985A;
+    --log-err:#E67971;
+
+    --mono:'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+    --sans:'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+    --serif:'Fraunces', Georgia, 'Times New Roman', serif;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(circle at 12% -10%, rgba(147,114,47,0.05), transparent 42%),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--accent-tint); color:var(--accent);}
+  :focus-visible{outline:2px solid var(--accent-line); outline-offset:2px;}
+  a{color:inherit;}
+
+  .wrap{max-width:1220px; margin:0 auto; padding:32px 24px 64px;}
+
+  /* ---------- Header ---------- */
+  header{
+    display:flex; align-items:flex-end; justify-content:space-between;
+    gap:24px; flex-wrap:wrap;
+    padding-bottom:24px; margin-bottom:24px;
+    border-bottom:1px solid var(--line);
+  }
+  .brand-block{display:flex; flex-direction:column; gap:7px;}
+  .brand-eyebrow{
+    font-family:var(--mono); font-size:11px; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--text-faint);
+  }
+  .brand-title{
+    font-family:var(--serif); font-weight:600; font-size:32px; font-style:normal;
+    letter-spacing:-.01em; color:var(--text);
+    display:flex; align-items:center; gap:12px;
+  }
+  .brand-title .dot{
+    width:9px; height:9px; border-radius:50%; background:var(--accent-line);
+    box-shadow:0 0 0 4px var(--accent-tint);
+  }
+  .brand-sub{font-size:13.5px; color:var(--text-dim); max-width:560px; line-height:1.55;}
+  .brand-file{font-family:var(--mono); color:var(--text-faint); font-size:11.5px;}
+
+  .env-badges{display:flex; gap:8px; flex-wrap:wrap;}
+  .badge{
+    font-family:var(--mono); font-size:11px; padding:5px 9px;
+    border:1px solid var(--line); border-radius:6px; color:var(--text-dim);
+    background:var(--panel-2);
+  }
+
+  /* ---------- Scope / config panel ---------- */
+  .scope-panel{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:18px 20px; margin-bottom:18px; box-shadow:var(--shadow-sm), var(--shadow-lg);
+  }
+  .scope-head{
+    font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--text-faint); margin-bottom:14px;
+  }
+  .scope-row{display:flex; gap:32px; flex-wrap:wrap;}
+  .scope-block label.block-label{
+    display:block; font-family:var(--mono); font-size:10.5px; color:var(--text-faint);
+    letter-spacing:.06em; text-transform:uppercase; margin-bottom:9px;
+  }
+
+  .vertical-pills{display:flex; gap:8px; flex-wrap:wrap; max-width:480px;}
+  .vpill{
+    display:flex; align-items:center; gap:7px;
+    font-family:var(--mono); font-size:12px; color:var(--text-dim);
+    background:var(--panel-2); border:1px solid var(--line); border-radius:7px;
+    padding:8px 11px; cursor:pointer; transition:border-color .15s ease, color .15s ease, background .15s ease;
+  }
+  .vpill .swatch{width:7px; height:7px; border-radius:2px; flex-shrink:0;}
+  .vpill:hover{border-color:#D2C7AC;}
+  .vpill.active{border-color:var(--accent-line); color:var(--text); background:var(--accent-tint);}
+  .vpill .count{color:var(--text-faint); font-size:10.5px;}
+  .vpill.active .count{color:var(--accent);}
+
+  .date-range{display:flex; align-items:center; gap:10px;}
+  .date-field{display:flex; flex-direction:column; gap:6px;}
+  .date-field span{font-family:var(--mono); font-size:10px; color:var(--text-faint);}
+  input[type="date"]{
+    font-family:var(--mono); font-size:12.5px; color:var(--text);
+    background:var(--panel-2); border:1px solid var(--line); border-radius:7px;
+    padding:8px 10px; color-scheme:light;
+  }
+  input[type="date"]:focus-visible{border-color:var(--accent-line);}
+  .date-arrow{color:var(--text-faint); font-family:var(--mono); margin-top:16px;}
+
+  /* ---------- Control bar ---------- */
+  .control-bar{
+    display:flex; align-items:center; justify-content:space-between;
+    gap:16px; flex-wrap:wrap;
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:14px 18px; margin-bottom:22px; box-shadow:var(--shadow-sm);
+  }
+  .control-left{display:flex; align-items:center; gap:18px; flex-wrap:wrap;}
+  .status-pill{
+    display:flex; align-items:center; gap:8px;
+    font-family:var(--mono); font-size:12px; letter-spacing:.04em;
+  }
+  .status-led{width:8px; height:8px; border-radius:50%; background:var(--text-faint); transition:background .2s ease, box-shadow .2s ease;}
+  .status-pill.idle .status-led{background:var(--text-faint);}
+  .status-pill.running .status-led{background:var(--warn); box-shadow:0 0 0 4px var(--warn-tint); animation:pulse 1s infinite;}
+  .status-pill.success .status-led{background:var(--accent-line); box-shadow:0 0 0 4px var(--accent-tint);}
+  .status-pill.error .status-led{background:var(--err); box-shadow:0 0 0 4px var(--err-tint);}
+  @keyframes pulse{0%,100%{opacity:1;} 50%{opacity:.4;}}
+
+  .stage-counter{font-family:var(--mono); font-size:12px; color:var(--text-dim);}
+  .stage-counter b{color:var(--text);}
+
+  .toggle-group{display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:11.5px; color:var(--text-dim);}
+  .toggle{display:flex; border:1px solid var(--line); border-radius:6px; overflow:hidden;}
+  .toggle button{
+    background:var(--panel-2); border:none; color:var(--text-dim);
+    font-family:var(--mono); font-size:11px; padding:6px 10px; cursor:pointer;
+  }
+  .toggle button.on{background:var(--accent-tint); color:var(--accent);}
+
+  .run-btn{
+    font-family:var(--mono); font-size:13px; font-weight:600; letter-spacing:.03em;
+    background:var(--accent-line); color:var(--accent-ink); border:none; border-radius:7px;
+    padding:11px 20px; cursor:pointer; display:flex; align-items:center; gap:8px;
+    transition:transform .1s ease, filter .15s ease;
+  }
+  .run-btn:hover{filter:brightness(1.05);}
+  .run-btn:active{transform:scale(.98);}
+  .run-btn:disabled{background:var(--panel-2); color:var(--text-faint); cursor:not-allowed;}
+  .reset-btn{
+    font-family:var(--mono); font-size:12px; color:var(--text-dim);
+    background:transparent; border:1px solid var(--line); border-radius:7px;
+    padding:10px 14px; cursor:pointer;
+  }
+  .reset-btn:hover{border-color:#D2C7AC; color:var(--text);}
+
+  /* ---------- Main grid ---------- */
+  .grid{display:grid; grid-template-columns:400px 1fr; gap:18px;}
+  @media (max-width:880px){ .grid{grid-template-columns:1fr;} }
+
+  .panel-head{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:13px 16px; border-bottom:1px solid var(--line);
+  }
+  .panel-head h2{
+    font-family:var(--mono); font-size:11.5px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--text-dim); margin:0; font-weight:500;
+  }
+  .panel-head .hint{font-family:var(--mono); font-size:10.5px; color:var(--text-faint);}
+
+  /* ---------- Pipeline rail ---------- */
+  .rail-panel{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; display:flex; flex-direction:column; box-shadow:var(--shadow-sm);}
+  .rail{position:relative; padding:20px 16px 20px 40px;}
+  .rail::before{content:""; position:absolute; left:24px; top:24px; bottom:24px; width:1.5px; background:var(--line);}
+  .node{position:relative; padding-bottom:22px;}
+  .node:last-child{padding-bottom:0;}
+  .node-led{
+    position:absolute; left:-28px; top:2px; width:15px; height:15px; border-radius:50%;
+    background:var(--panel-2); border:2px solid var(--line);
+    display:flex; align-items:center; justify-content:center;
+    transition:border-color .2s ease, background .2s ease; z-index:2;
+  }
+  .node.done .node-led{border-color:var(--accent-line); background:var(--accent-tint);}
+  .node.active .node-led{border-color:var(--warn); background:var(--warn-tint); animation:ringpulse 1s infinite;}
+  @keyframes ringpulse{0%,100%{box-shadow:0 0 0 0 var(--warn-tint);} 50%{box-shadow:0 0 0 5px transparent;}}
+  .node-led svg{width:8px; height:8px; color:var(--text-dim);}
+
+  .node-code{font-family:var(--mono); font-size:10px; color:var(--text-faint); letter-spacing:.06em;}
+  .node.active .node-code, .node.done .node-code{color:var(--text-dim);}
+  .node-title{font-size:13.5px; font-weight:600; margin:2px 0 3px; color:var(--text-faint); transition:color .2s ease;}
+  .node.active .node-title{color:var(--warn);}
+  .node.done .node-title{color:var(--text);}
+  .node-desc{font-size:11.5px; color:var(--text-faint); line-height:1.45; max-width:300px;}
+
+  .branch-row{display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;}
+  .branch-pill{
+    font-family:var(--mono); font-size:10px; padding:4px 8px; border-radius:5px;
+    border:1px solid var(--line); color:var(--text-faint); opacity:.5;
+    transition:opacity .2s ease, border-color .2s ease, color .2s ease, background .2s ease;
+  }
+  .branch-pill.taken{opacity:1;}
+  .branch-pill.taken.path-yes{border-color:var(--warn); color:var(--warn); background:var(--warn-tint);}
+  .branch-pill.taken.path-no{border-color:var(--accent-line); color:var(--accent); background:var(--accent-tint);}
+
+  /* ---------- Log console (dark, intentional contrast) ---------- */
+  .log-panel{background:var(--log-bg); border:1px solid var(--log-line); border-radius:var(--radius); display:flex; flex-direction:column; min-height:520px; box-shadow:var(--shadow-lg);}
+  .log-panel .panel-head{border-bottom:1px solid var(--log-line);}
+  .log-panel .panel-head h2{color:var(--log-text-dim);}
+  .log-panel .panel-head .hint{color:var(--log-text-faint);}
+  .log-body{flex:1; padding:14px 16px; overflow-y:auto; max-height:560px; font-family:var(--mono); font-size:12px; line-height:1.75;}
+  .log-line{display:flex; gap:10px; white-space:pre-wrap; word-break:break-word;}
+  .log-time{color:var(--log-text-faint); flex-shrink:0;}
+  .log-level{flex-shrink:0; width:46px; font-weight:600;}
+  .log-level.INFO{color:var(--log-text-dim);}
+  .log-level.OK{color:var(--log-gold);}
+  .log-level.WARN{color:var(--log-warn);}
+  .log-level.ERR{color:var(--log-err);}
+  .log-msg{color:var(--log-text);}
+  .log-empty{color:var(--log-text-faint); font-family:var(--mono); font-size:12px;}
+  .caret{display:inline-block; width:7px; height:14px; background:var(--log-gold); margin-left:2px; animation:blink 1s step-end infinite; vertical-align:-2px;}
+  @keyframes blink{50%{opacity:0;}}
+
+  /* ---------- Results ---------- */
+  .results{
+    margin-top:18px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:18px 20px; opacity:0; transform:translateY(6px); transition:opacity .35s ease, transform .35s ease;
+    pointer-events:none; box-shadow:var(--shadow-sm);
+  }
+  .results.show{opacity:1; transform:translateY(0); pointer-events:auto;}
+  .results-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:14px;}
+  @media (max-width:720px){.results-grid{grid-template-columns:repeat(2,1fr);}}
+  .metric .metric-label{font-family:var(--mono); font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.08em;}
+  .metric .metric-before{font-size:11px; color:var(--text-faint); text-decoration:line-through; margin-top:6px;}
+  .metric .metric-after{font-family:var(--serif); font-size:22px; color:var(--accent); margin-top:2px; font-weight:600;}
+
+  footer{
+    margin-top:36px; padding-top:18px; border-top:1px solid var(--line);
+    display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap;
+  }
+  .stack-tags{display:flex; gap:7px; flex-wrap:wrap;}
+  .stack-tags span{font-family:var(--mono); font-size:10.5px; color:var(--text-faint); border:1px solid var(--line-soft); border-radius:5px; padding:4px 8px; background:var(--panel);}
+  .footer-note{font-family:var(--mono); font-size:10.5px; color:var(--text-faint); max-width:420px; line-height:1.6;}
+
+  @media (prefers-reduced-motion: reduce){ *{animation:none !important; transition:none !important;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand-block">
+      <div class="brand-eyebrow">Attributics Tech — Internal Tooling</div>
+      <div class="brand-title"><span class="dot"></span> Ops Console</div>
+      <div class="brand-sub">CleverTap Daily Stats — pulls campaign performance straight from the dashboard API and writes it into the reporting sheet, formatted and ready.</div>
+      <div class="brand-file">clevertap_stats.py</div>
+    </div>
+    <div class="env-badges">
+      <span class="badge">env: production</span>
+      <span class="badge">sheets: connected</span>
+      <span class="badge">owner: naman</span>
+    </div>
+  </header>
+
+  <div class="scope-panel">
+    <div class="scope-head">Run scope</div>
+    <div class="scope-row">
+      <div class="scope-block">
+        <label class="block-label">Vertical</label>
+        <div class="vertical-pills" id="verticalPills"></div>
+      </div>
+      <div class="scope-block">
+        <label class="block-label">Date range</label>
+        <div class="date-range">
+          <div class="date-field"><span>From</span><input type="date" id="dateFrom" value="2026-07-28"></div>
+          <div class="date-arrow">→</div>
+          <div class="date-field"><span>To</span><input type="date" id="dateTo" value="2026-07-28"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="control-bar">
+    <div class="control-left">
+      <div class="status-pill idle" id="statusPill"><span class="status-led"></span><span id="statusText">IDLE</span></div>
+      <div class="stage-counter">STAGE <b id="stageNow">0</b> / <span id="stageTotal">0</span></div>
+      <div class="toggle-group">
+        MODE
+        <div class="toggle">
+          <button class="on" id="modeHeaded">headed</button>
+          <button id="modeHeadless">headless</button>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex; gap:10px;">
+      <button class="reset-btn" id="resetBtn">Reset</button>
+      <button class="run-btn" id="runBtn">▶ Run agent</button>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="rail-panel">
+      <div class="panel-head"><h2>Pipeline</h2><span class="hint" id="railHint">7 stages</span></div>
+      <div class="rail" id="rail"></div>
+    </div>
+
+    <div class="log-panel">
+      <div class="panel-head"><h2>Live log</h2><span class="hint">stdout</span></div>
+      <div class="log-body" id="logBody">
+        <div class="log-empty">Set a vertical and date range, then press "Run agent".<span class="caret"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="results" id="results">
+    <div class="panel-head" style="padding:0 0 12px; border:none;"><h2>Run summary</h2></div>
+    <div class="results-grid" id="resultsGrid"></div>
+  </div>
+
+  <footer>
+    <div class="stack-tags">
+      <span>Playwright</span><span>gspread</span><span>Google Sheets API v4</span><span>Service Account Auth</span>
+    </div>
+    <div class="footer-note">Retries use exponential backoff: delay = base × 2^attempt. Credentials read from a local .env, never committed.</div>
+  </footer>
+
+</div>
+
+<script>
+/* ---------------- Verticals (from the reporting sheet tabs) ---------------- */
+const VERTICALS = [
+  {key:'Day0',      color:'#7FA6C9', count:39, sample:['WA_Varca_Day0','WA_Referral_Day0']},
+  {key:'Day5',      color:'#8B9AC9', count:40, sample:['WA_Occupancy_Day5','WA_HP_Day5']},
+  {key:'Day15',     color:'#A98BC9', count:40, sample:['WA_Retention_Day15']},
+  {key:'WhatsApp',  color:'#C98B9E', count:13, sample:['Prospect01_WA_PRO_Consent_AUTO']},
+  {key:'SMS',       color:'#C9A66B', count:11, sample:['Prospect02_SMS_HFRP_Consent_FB_AUTO']},
+  {key:'Concierge', color:'#C9C06B', count:10, sample:['WA_Day05_SameState']},
+];
+let selectedVertical = 'Day0';
+
+/* ---------------- Pipeline (clevertap_stats.py only) ---------------- */
+function buildStages(){
+  const v = VERTICALS.find(x=>x.key===selectedVertical);
+  const from = document.getElementById('dateFrom').value;
+  const to = document.getElementById('dateTo').value;
+  const rangeLabel = (from === to) ? from : `${from} → ${to}`;
+
+  return [
+    {id:'01', type:'stage', title:'Boot & validate config', desc:'Load .env, confirm sheet ID and service-account key are present.'},
+    {id:'02', type:'branch', title:'Google SSO login', condA:'MFA challenge?', yes:'prompt code / wait', no:'cached session'},
+    {id:'03', type:'stage', title:'Extract cookies & CSRF', desc:'Harvest JSESSIONID, AWSALB, and x-clevertap-csrf-token.'},
+    {id:'04', type:'branch', title:`Query ${v.key} nodes (×${v.count})`, condA:'Request failed?', yes:'retry w/ backoff', no:'append row', desc:`Fetching ${v.key} campaigns for ${rangeLabel}.`},
+    {id:'05', type:'branch', title:'Open Google Sheet', condA:'Tab exists?', yes:'append rows', no:'create + header', desc:`Target tab: "${v.key}".`},
+    {id:'06', type:'stage', title:'Format sheet', desc:'Freeze header, set colors, column widths, filters.'},
+    {id:'07', type:'stage', title:'Done', desc:`Report written for ${rangeLabel}.`},
+  ];
+}
+
+function buildMetrics(){
+  const v = VERTICALS.find(x=>x.key===selectedVertical);
+  return [
+    {label:'Daily effort', before:'30–45 min manual', after:'< 1 min'},
+    {label:'Accuracy', before:'copy-paste errors', after:'100% direct sync'},
+    {label:`${v.key} nodes`, before:'—', after:String(v.count)},
+    {label:'Time saved / yr', before:'—', after:'~240 hrs'},
+  ];
+}
+
+let running = false;
+let currentStages = [];
+let eventSource = null;
+
+const railEl = document.getElementById('rail');
+const railHint = document.getElementById('railHint');
+const logBody = document.getElementById('logBody');
+const statusPill = document.getElementById('statusPill');
+const statusText = document.getElementById('statusText');
+const stageNow = document.getElementById('stageNow');
+const stageTotal = document.getElementById('stageTotal');
+const resultsEl = document.getElementById('results');
+const resultsGrid = document.getElementById('resultsGrid');
+const runBtn = document.getElementById('runBtn');
+const resetBtn = document.getElementById('resetBtn');
+const verticalPillsEl = document.getElementById('verticalPills');
+
+function renderVerticalPills(){
+  verticalPillsEl.innerHTML = '';
+  VERTICALS.forEach(v=>{
+    const el = document.createElement('button');
+    el.className = 'vpill' + (v.key===selectedVertical ? ' active' : '');
+    el.innerHTML = `<span class="swatch" style="background:${v.color}"></span>${v.key}<span class="count">${v.count}</span>`;
+    el.addEventListener('click', ()=>{ if(running) return; selectedVertical = v.key; renderAll(); });
+    verticalPillsEl.appendChild(el);
+  });
+}
+
+function branchIconSvg(){
+  return '<svg viewBox="0 0 8 8"><path d="M1 4h6M4 1v6" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>';
+}
+
+function renderRail(){
+  currentStages = buildStages();
+  railHint.textContent = currentStages.length + ' stages';
+  stageTotal.textContent = currentStages.length;
+  stageNow.textContent = '0';
+  railEl.innerHTML = '';
+  currentStages.forEach(st=>{
+    const node = document.createElement('div');
+    node.className = 'node';
+    node.id = 'node-'+st.id;
+    let branchHtml = '';
+    if(st.type === 'branch'){
+      branchHtml = `<div class="branch-row">
+        <span class="branch-pill path-yes" data-path="yes">${st.condA} → ${st.yes}</span>
+        <span class="branch-pill path-no" data-path="no">${st.condA} → ${st.no}</span>
+      </div>`;
+    }
+    node.innerHTML = `
+      <div class="node-led">${st.type==='branch' ? branchIconSvg() : ''}</div>
+      <div class="node-code">STG.${st.id}${st.type==='branch' ? ' · BRANCH' : ''}</div>
+      <div class="node-title">${st.title}</div>
+      <div class="node-desc">${st.desc || ''}</div>
+      ${branchHtml}
+    `;
+    railEl.appendChild(node);
+  });
+}
+
+function renderResultsShell(){
+  resultsEl.classList.remove('show');
+  resultsGrid.innerHTML = '';
+  buildMetrics().forEach(m=>{
+    const d = document.createElement('div');
+    d.className = 'metric';
+    d.innerHTML = `<div class="metric-label">${m.label}</div><div class="metric-before">${m.before}</div><div class="metric-after">${m.after}</div>`;
+    resultsGrid.appendChild(d);
+  });
+}
+
+function resetLog(){
+  logBody.innerHTML = '<div class="log-empty">Set a vertical and date range, then press "Run agent".<span class="caret"></span></div>';
+}
+
+function setStatus(state){
+  statusPill.className = 'status-pill ' + state;
+  statusText.textContent = state.toUpperCase();
+  if(state === 'running'){
+    resetBtn.textContent = 'Stop';
+  } else {
+    resetBtn.textContent = 'Reset';
+  }
+}
+
+function renderAll(){
+  renderVerticalPills();
+  renderRail();
+  renderResultsShell();
+  resetLog();
+  setStatus('idle');
+  runBtn.disabled = false;
+}
+
+function pad(n){ return n<10 ? '0'+n : ''+n; }
+function timestamp(){
+  const d = new Date();
+  return `[${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}]`;
+}
+function pushLog(level, msg){
+  const empty = logBody.querySelector('.log-empty');
+  if(empty) empty.remove();
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="log-time">${timestamp()}</span><span class="log-level ${level}">${level}</span><span class="log-msg"></span>`;
+  line.querySelector('.log-msg').textContent = msg;
+  logBody.appendChild(line);
+  logBody.scrollTop = logBody.scrollHeight;
+}
+
+async function runPipeline(){
+  if(running) return;
+  running = true;
+  runBtn.disabled = true;
+  document.querySelectorAll('.vpill').forEach(p=>p.style.pointerEvents='none');
+  resetLog();
+  resultsEl.classList.remove('show');
+  setStatus('running');
+
+  // Reset pipeline UI nodes
+  document.querySelectorAll('.node').forEach(node => {
+    node.className = 'node';
+    node.querySelectorAll('.branch-pill').forEach(pill => pill.classList.remove('taken'));
+  });
+
+  const headed = document.getElementById('modeHeaded').classList.contains('on');
+  const dateFrom = document.getElementById('dateFrom').value;
+  const dateTo = document.getElementById('dateTo').value;
+
+  pushLog('INFO', `Connecting to agent server...`);
+
+  const url = `/api/run?vertical=${selectedVertical}&date_from=${dateFrom}&date_to=${dateTo}&headed=${headed}`;
+  eventSource = new EventSource(url);
+
+  eventSource.addEventListener('log', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      pushLog(data.level, data.msg);
+    } catch (err) {
+      pushLog('ERR', `Malformed log data: ${e.data}`);
+    }
+  });
+
+  eventSource.addEventListener('stage', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      const { id, status, branch_taken } = data;
+      
+      const nodeEl = document.getElementById('node-' + id);
+      if (!nodeEl) return;
+      
+      if (status === 'active') {
+        document.querySelectorAll('.node.active').forEach(n => n.classList.remove('active'));
+        nodeEl.classList.add('active');
+        nodeEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        stageNow.textContent = String(parseInt(id, 10));
+      } else if (status === 'done') {
+        nodeEl.classList.remove('active');
+        nodeEl.classList.add('done');
+        
+        if (branch_taken) {
+          const pill = nodeEl.querySelector(`.branch-pill[data-path="${branch_taken}"]`);
+          if (pill) pill.classList.add('taken');
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  eventSource.addEventListener('metrics', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      resultsGrid.innerHTML = '';
+      data.forEach(m => {
+        const d = document.createElement('div');
+        d.className = 'metric';
+        d.innerHTML = `<div class="metric-label">${m.label}</div><div class="metric-before">${m.before}</div><div class="metric-after">${m.after}</div>`;
+        resultsGrid.appendChild(d);
+      });
+      resultsEl.classList.add('show');
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  eventSource.addEventListener('status', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      setStatus(data.status);
+      if (data.status === 'success' || data.status === 'error') {
+        eventSource.close();
+        running = false;
+        runBtn.disabled = false;
+        document.querySelectorAll('.vpill').forEach(p=>p.style.pointerEvents='auto');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  eventSource.onerror = (err) => {
+    pushLog('ERR', 'Lost connection to agent server.');
+    setStatus('error');
+    eventSource.close();
+    running = false;
+    runBtn.disabled = false;
+    document.querySelectorAll('.vpill').forEach(p=>p.style.pointerEvents='auto');
+  };
+}
+
+runBtn.addEventListener('click', runPipeline);
+
+resetBtn.addEventListener('click', async ()=>{ 
+  if(running) {
+    pushLog('WARN', 'Aborting agent execution...');
+    if(eventSource) {
+      eventSource.close();
+    }
+    try {
+      await fetch('/api/stop', { method: 'POST' });
+      pushLog('OK', 'Aborted execution.');
+    } catch (e) {
+      pushLog('ERR', 'Failed to communicate abort request to backend.');
+    }
+    setStatus('error');
+    running = false;
+    runBtn.disabled = false;
+    document.querySelectorAll('.vpill').forEach(p=>p.style.pointerEvents='auto');
+  } else {
+    renderAll(); 
+  }
+});
+
+document.getElementById('modeHeaded').addEventListener('click', ()=>{
+  document.getElementById('modeHeaded').classList.add('on');
+  document.getElementById('modeHeadless').classList.remove('on');
+});
+document.getElementById('modeHeadless').addEventListener('click', ()=>{
+  document.getElementById('modeHeadless').classList.add('on');
+  document.getElementById('modeHeaded').classList.remove('on');
+});
+document.getElementById('dateFrom').addEventListener('change', ()=>{ if(!running) renderRail(); });
+document.getElementById('dateTo').addEventListener('change', ()=>{ if(!running) renderRail(); });
+
+renderAll();
+</script>
+</body>
+</html>
