@@ -19,12 +19,55 @@ from datetime import datetime
 from pathlib import Path
 
 import requests
-from data_loader import JOURNEYS
+import json
 
 BASE_DIR = Path(__file__).resolve().parent
 ENV_FILE = BASE_DIR / ".env"
 
+def _load_groups(filename: str) -> dict[str, list[tuple[str, int]]]:
+    path = BASE_DIR / filename
+    if not path.exists():
+        raise FileNotFoundError(f"Data file not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    return {group: [tuple(pair) for pair in entries] for group, entries in raw.items()}
+
+JOURNEYS = _load_groups("journeys.json")
+
 DAY_GROUPS = ("Day0", "Day5", "Day15")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 PROSPECT_GROUPS = {
     "WhatsApp": [
