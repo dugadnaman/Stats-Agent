@@ -1065,8 +1065,8 @@ def run(date_value: str | None = None, tabs_value: str | None = None, headed: bo
 
     validate_config()
     
-    if not CT_COOKIE:
-        # Always refresh session via browser automation (ephemeral context, never persistent/cached)
+    if not CT_COOKIE or headed or manual:
+        # Always refresh session via browser automation if forced by headed/manual flags or if cookies are missing
         refresh_clevertap_session(headed=HEADED_MODE, skip_logout=skip_logout, manual=manual)
     else:
         init_requests_session()
