@@ -364,11 +364,15 @@ const VERTICALS = [
   {key:'SMS',       color:'#C9A66B', count:11, sample:['Prospect02_SMS_HFRP_Consent_FB_AUTO']},
   {key:'Concierge', color:'#C9C06B', count:10, sample:['WA_Day05_SameState']},
 ];
-let selectedVertical = 'Day0';
+let selectedVerticals = ['Day0'];
 
 /* ---------------- Pipeline (clevertap_stats.py only) ---------------- */
 function buildStages(){
-  const v = VERTICALS.find(x=>x.key===selectedVertical);
+  const activeV = VERTICALS.filter(x => selectedVerticals.includes(x.key));
+  const totalCount = activeV.reduce((sum, x) => sum + x.count, 0);
+  const keysLabel = selectedVerticals.length === VERTICALS.length ? 'All verticals' : selectedVerticals.join(' + ');
+  const tabsLabel = selectedVerticals.length === VERTICALS.length ? 'All tabs' : selectedVerticals.map(x => `"${x}"`).join(', ');
+
   const from = document.getElementById('dateFrom').value;
   const to = document.getElementById('dateTo').value;
   const rangeLabel = (from === to) ? from : `${from} → ${to}`;
@@ -377,19 +381,22 @@ function buildStages(){
     {id:'01', type:'stage', title:'Boot & validate config', desc:'Load .env, confirm sheet ID and service-account key are present.'},
     {id:'02', type:'branch', title:'Google SSO login', condA:'MFA challenge?', yes:'prompt code / wait', no:'cached session'},
     {id:'03', type:'stage', title:'Extract cookies & CSRF', desc:'Harvest JSESSIONID, AWSALB, and x-clevertap-csrf-token.'},
-    {id:'04', type:'branch', title:`Query ${v.key} nodes (×${v.count})`, condA:'Request failed?', yes:'retry w/ backoff', no:'append row', desc:`Fetching ${v.key} campaigns for ${rangeLabel}.`},
-    {id:'05', type:'branch', title:'Open Google Sheet', condA:'Tab exists?', yes:'append rows', no:'create + header', desc:`Target tab: "${v.key}".`},
+    {id:'04', type:'branch', title:`Query ${keysLabel} nodes (×${totalCount})`, condA:'Request failed?', yes:'retry w/ backoff', no:'append row', desc:`Fetching campaign stats for ${rangeLabel}.`},
+    {id:'05', type:'branch', title:'Open Google Sheet', condA:'Tab exists?', yes:'append rows', no:'create + header', desc:`Target tabs: ${tabsLabel}.`},
     {id:'06', type:'stage', title:'Format sheet', desc:'Freeze header, set colors, column widths, filters.'},
     {id:'07', type:'stage', title:'Done', desc:`Report written for ${rangeLabel}.`},
   ];
 }
 
 function buildMetrics(){
-  const v = VERTICALS.find(x=>x.key===selectedVertical);
+  const activeV = VERTICALS.filter(x => selectedVerticals.includes(x.key));
+  const totalCount = activeV.reduce((sum, x) => sum + x.count, 0);
+  const keysLabel = selectedVerticals.length === VERTICALS.length ? 'All verticals' : selectedVerticals.join(' + ');
+  
   return [
     {label:'Daily effort', before:'30–45 min manual', after:'< 1 min'},
     {label:'Accuracy', before:'copy-paste errors', after:'100% direct sync'},
-    {label:`${v.key} nodes`, before:'—', after:String(v.count)},
+    {label:`${keysLabel} nodes`, before:'—', after:String(totalCount)},
     {label:'Time saved / yr', before:'—', after:'~240 hrs'},
   ];
 }
@@ -413,11 +420,39 @@ const verticalPillsEl = document.getElementById('verticalPills');
 
 function renderVerticalPills(){
   verticalPillsEl.innerHTML = '';
+  
+  // Add "All" pill
+  const allEl = document.createElement('button');
+  const isAllActive = selectedVerticals.length === VERTICALS.length;
+  allEl.className = 'vpill' + (isAllActive ? ' active' : '');
+  allEl.innerHTML = `<span class="swatch" style="background:#B08D48"></span>All<span class="count">${VERTICALS.length}</span>`;
+  allEl.addEventListener('click', ()=>{
+    if(running) return;
+    if(isAllActive) {
+      selectedVerticals = [VERTICALS[0].key];
+    } else {
+      selectedVerticals = VERTICALS.map(x=>x.key);
+    }
+    renderAll();
+  });
+  verticalPillsEl.appendChild(allEl);
+
   VERTICALS.forEach(v=>{
     const el = document.createElement('button');
-    el.className = 'vpill' + (v.key===selectedVertical ? ' active' : '');
+    const isActive = selectedVerticals.includes(v.key);
+    el.className = 'vpill' + (isActive ? ' active' : '');
     el.innerHTML = `<span class="swatch" style="background:${v.color}"></span>${v.key}<span class="count">${v.count}</span>`;
-    el.addEventListener('click', ()=>{ if(running) return; selectedVertical = v.key; renderAll(); });
+    el.addEventListener('click', ()=>{
+      if(running) return;
+      if(isActive) {
+        if (selectedVerticals.length > 1) {
+          selectedVerticals = selectedVerticals.filter(x => x !== v.key);
+        }
+      } else {
+        selectedVerticals.push(v.key);
+      }
+      renderAll();
+    });
     verticalPillsEl.appendChild(el);
   });
 }
@@ -525,7 +560,8 @@ async function runPipeline(){
 
   pushLog('INFO', `Connecting to agent server...`);
 
-  const url = `/api/run?vertical=${selectedVertical}&date_from=${dateFrom}&date_to=${dateTo}&headed=${headed}`;
+  const verticalParam = selectedVerticals.join(',');
+  const url = `/api/run?vertical=${verticalParam}&date_from=${dateFrom}&date_to=${dateTo}&headed=${headed}`;
   eventSource = new EventSource(url);
 
   eventSource.addEventListener('log', (e) => {

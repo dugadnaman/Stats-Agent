@@ -191,10 +191,18 @@ async def run_agent(
         yield f"event: status\ndata: {json.dumps({'status': 'success'})}\n\n"
 
         # Generate metrics data summary to output to UI
+        selected_verticals = [v.strip() for v in vertical.split(",") if v.strip()]
+        total_nodes = sum(NODE_COUNTS.get(v, 0) for v in selected_verticals)
+        
+        if len(selected_verticals) == len(NODE_COUNTS):
+            nodes_label = "All verticals nodes"
+        else:
+            nodes_label = f"{' + '.join(selected_verticals)} nodes"
+
         metrics_data = [
             {"label": "Daily effort", "before": "30–45 min manual", "after": "< 1 min"},
             {"label": "Accuracy", "before": "copy-paste errors", "after": "100% direct sync"},
-            {"label": f"{vertical} nodes", "before": "—", "after": str(NODE_COUNTS.get(vertical, 0))},
+            {"label": nodes_label, "before": "—", "after": str(total_nodes)},
             {"label": "Time saved / yr", "before": "—", "after": "~240 hrs"},
         ]
         yield f"event: metrics\ndata: {json.dumps(metrics_data)}\n\n"
