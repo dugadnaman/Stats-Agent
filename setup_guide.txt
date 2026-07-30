@@ -217,6 +217,23 @@ To backfill a specific date, use --date with YYYY-MM-DD:
 ./.venv/bin/python3 clevertap_stats.py --date 2026-05-18 Day05_Segments Day20_Segments Day30_Segments Day60_Segments
 
 
+Running Ops Console (Web UI)
+----------------------------
+You can run the web console locally to select verticals/dates and run the agent from a graphical interface with live logging.
+
+1. Install web dependencies (already added to requirements.txt):
+
+   ./.venv/bin/pip install -r requirements.txt
+
+2. Run the application server:
+
+   ./.venv/bin/python app.py
+
+3. Open your browser and navigate to:
+
+   http://127.0.0.1:8000
+
+
 Mac Cron Setup
 --------------
 1. Open Terminal

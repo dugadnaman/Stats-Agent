@@ -2,3 +2,5 @@ requests
 gspread
 google-auth
 playwright
+fastapi
+uvicorn

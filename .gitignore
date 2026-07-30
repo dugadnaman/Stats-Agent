@@ -6,4 +6,9 @@ __pycache__/
 .venv/
 venv/
 .playwright_user_data/
+.playwright_ct_profile/
+.playwright_vf_profile_*/
+failure_row_*.png
+diagnose_vf.png
+
 
