@@ -1,0 +1,60 @@
+name: Sync CleverTap Stats
+
+on:
+  workflow_dispatch:
+    inputs:
+      vertical:
+        description: 'Vertical(s) to run (e.g., Day0, Day5, Day15, Concierge, WhatsApp, SMS. Leave blank to run all)'
+        required: false
+        default: 'Day0'
+      date:
+        description: 'Date to run (YYYY-MM-DD format. Leave blank for today)'
+        required: false
+        default: ''
+
+jobs:
+  sync-stats:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt python-dotenv --only-binary=:all:
+          playwright install chromium
+          sudo playwright install-deps chromium
+
+      - name: Create service_account.json
+        run: |
+          echo '${{ secrets.SERVICE_ACCOUNT_JSON }}' > service_account.json
+
+      - name: Run Stats Sync Script
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            ARGS="$ARGS --date ${{ github.event.inputs.date }}"
+          fi
+          if [ -n "${{ github.event.inputs.vertical }}" ]; then
+            ARGS="$ARGS --tabs ${{ github.event.inputs.vertical }}"
+          fi
+          
+          python clevertap_stats.py $ARGS
+        env:
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          CLEVERTAP_EMAIL: ${{ secrets.CLEVERTAP_EMAIL }}
+          CLEVERTAP_PASSWORD: ${{ secrets.CLEVERTAP_PASSWORD }}
+          CLEVERTAP_TOTP_SECRET: ${{ secrets.CLEVERTAP_TOTP_SECRET }}
+          CT_BASE_URL: ${{ secrets.CT_BASE_URL }}
+          CT_REFERER_URL: ${{ secrets.CT_REFERER_URL }}
+          CT_COOKIE: ${{ secrets.CT_COOKIE }}
+          CT_CSRF_TOKEN: ${{ secrets.CT_CSRF_TOKEN }}
+          SERVICE_ACCOUNT_FILE: service_account.json
