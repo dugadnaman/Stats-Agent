@@ -42,9 +42,6 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: playwright install chromium
 
-      - name: Install Playwright System Dependencies
-        run: sudo playwright install-deps chromium
-
       - name: Create service_account.json
         run: |
           echo '${{ secrets.SERVICE_ACCOUNT_JSON }}' > service_account.json
