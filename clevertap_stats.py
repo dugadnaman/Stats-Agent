@@ -27,7 +27,17 @@ ENV_FILE = BASE_DIR / ".env"
 def _load_groups(filename: str) -> dict[str, list[tuple[str, int]]]:
     path = BASE_DIR / filename
     if not path.exists():
-        raise FileNotFoundError(f"Data file not found: {path}")
+        # Case-insensitive fallback for strictly case-sensitive filesystems like Linux/GitHub Actions
+        alt_names = [filename.lower(), filename.upper()]
+        found = False
+        for alt in alt_names:
+            alt_path = BASE_DIR / alt
+            if alt_path.exists():
+                path = alt_path
+                found = True
+                break
+        if not found:
+            raise FileNotFoundError(f"Data file not found: {path}")
     with open(path, "r", encoding="utf-8") as f:
         raw = json.load(f)
     return {group: [tuple(pair) for pair in entries] for group, entries in raw.items()}
