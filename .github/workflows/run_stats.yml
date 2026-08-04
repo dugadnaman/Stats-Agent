@@ -6,7 +6,7 @@ on:
       vertical:
         description: 'Vertical(s) to run (e.g., Day0, Day5, Day15, Concierge, WhatsApp, SMS. Leave blank to run all)'
         required: false
-        default: 'Day0'
+        default: ''
       date:
         description: 'Date to run (YYYY-MM-DD format. Leave blank for today)'
         required: false
