@@ -20,6 +20,8 @@ from pathlib import Path
 
 import requests
 import json
+import threading
+import concurrent.futures
 
 BASE_DIR = Path(__file__).resolve().parent
 ENV_FILE = BASE_DIR / ".env"
@@ -199,8 +201,8 @@ atexit.register(close_browser_at_exit)
 
 def init_requests_session() -> None:
     global CT_COOKIE, CT_CSRF_TOKEN, session_client
-    session_client.cookies.clear()
     
+    jar = requests.cookies.RequestsCookieJar()
     if CT_COOKIE:
         for cookie_part in CT_COOKIE.split(";"):
             cookie_part = cookie_part.strip()
@@ -209,8 +211,9 @@ def init_requests_session() -> None:
             name, val = cookie_part.split("=", 1)
             if val.startswith('"') and val.endswith('"'):
                 val = val[1:-1]
-            session_client.cookies.set(name, val, domain="in1.dashboard.clevertap.com")
+            jar.set(name, val, domain="in1.dashboard.clevertap.com")
             
+    session_client.cookies = jar
     print("Initialized requests session with current cookies.")
 
 
@@ -625,6 +628,16 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
     print("CleverTap session refreshed successfully!")
 
 
+session_lock = threading.Lock()
+
+def safe_refresh_session(old_csrf: str) -> None:
+    with session_lock:
+        current_csrf = session_client.cookies.get("csrf", default="")
+        if current_csrf and current_csrf != old_csrf:
+            return
+        refresh_clevertap_session(headed=HEADED_MODE)
+
+
 def validate_config() -> None:
     missing = []
 
@@ -751,7 +764,7 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
             if resp.status_code in [401, 403]:
                 if not session_refreshed:
                     print(f"    Warning: CleverTap session expired (HTTP {resp.status_code}). Attempting to refresh session...")
-                    refresh_clevertap_session(headed=HEADED_MODE)
+                    safe_refresh_session(current_csrf)
                     session_refreshed = True
                     continue
                 else:
@@ -765,7 +778,7 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
             except (ValueError, requests.exceptions.JSONDecodeError) as exc:
                 if not session_refreshed:
                     print(f"    Warning: CleverTap response is not valid JSON. Attempting to refresh session... (Error: {exc})")
-                    refresh_clevertap_session(headed=HEADED_MODE)
+                    safe_refresh_session(current_csrf)
                     session_refreshed = True
                     continue
                 else:
@@ -777,7 +790,7 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
             if payload.get("success") is False:
                 if not session_refreshed:
                     print(f"    Warning: CleverTap API returned success=false ({payload.get('error')}). Attempting to refresh session...")
-                    refresh_clevertap_session(headed=HEADED_MODE)
+                    safe_refresh_session(current_csrf)
                     session_refreshed = True
                     continue
                 else:
@@ -988,9 +1001,29 @@ def write_daily_tab(sheet: gspread.Spreadsheet, tab_name: str, campaigns: list[t
     worksheet = get_or_create_tab(sheet, tab_name)
     rows: list[list[object]] = []
 
-    for node_name, campaign_id in campaigns:
+    def fetch_one(node_name: str, campaign_id: int):
         print(f"  Fetching {node_name} (Campaign ID: {campaign_id})...")
         stats = get_todays_stats(campaign_id, run_date)
+        print(
+            f"    {node_name}: Sent={stats['sent']} | Delivered={stats['delivered']} | "
+            f"Viewed={stats['viewed']} | Clicked={stats['clicked']}"
+        )
+        return node_name, campaign_id, stats
+
+    results_map = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(fetch_one, name, cid): (name, cid) for name, cid in campaigns}
+        for future in concurrent.futures.as_completed(futures):
+            name, cid = futures[future]
+            try:
+                name, cid, stats = future.result()
+                results_map[(name, cid)] = stats
+            except Exception as exc:
+                print(f"  Error fetching {name} ({cid}): {exc}")
+                results_map[(name, cid)] = {"sent": "ERROR", "delivered": "ERROR", "viewed": "ERROR", "clicked": "ERROR"}
+
+    for node_name, campaign_id in campaigns:
+        stats = results_map.get((node_name, campaign_id)) or {"sent": "ERROR", "delivered": "ERROR", "viewed": "ERROR", "clicked": "ERROR"}
         rows.append([
             run_date,
             node_name,
@@ -1000,11 +1033,6 @@ def write_daily_tab(sheet: gspread.Spreadsheet, tab_name: str, campaigns: list[t
             stats["viewed"],
             stats["clicked"],
         ])
-        print(
-            f"    Sent={stats['sent']} | Delivered={stats['delivered']} | "
-            f"Viewed={stats['viewed']} | Clicked={stats['clicked']}"
-        )
-        time.sleep(1)
 
     if any("ERROR" in row[3:] for row in rows):
         print(f"  Skipped writing to '{tab_name}' because one or more API calls failed\n")
@@ -1023,9 +1051,29 @@ def write_prospect_tab(sheet: gspread.Spreadsheet, tab_name: str, campaigns: lis
     worksheet = get_or_create_tab(sheet, tab_name)
     rows: list[list[object]] = []
 
-    for campaign_name, campaign_id in campaigns:
+    def fetch_one(campaign_name: str, campaign_id: int):
         print(f"  Fetching {campaign_name} (Campaign ID: {campaign_id})...")
         stats = get_todays_stats(campaign_id, run_date)
+        print(
+            f"    {campaign_name}: Sent={stats['sent']} | Delivered={stats['delivered']} | "
+            f"Viewed={stats['viewed']} | Clicked={stats['clicked']}"
+        )
+        return campaign_name, campaign_id, stats
+
+    results_map = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(fetch_one, name, cid): (name, cid) for name, cid in campaigns}
+        for future in concurrent.futures.as_completed(futures):
+            name, cid = futures[future]
+            try:
+                name, cid, stats = future.result()
+                results_map[(name, cid)] = stats
+            except Exception as exc:
+                print(f"  Error fetching {name} ({cid}): {exc}")
+                results_map[(name, cid)] = {"sent": "ERROR", "delivered": "ERROR", "viewed": "ERROR", "clicked": "ERROR"}
+
+    for campaign_name, campaign_id in campaigns:
+        stats = results_map.get((campaign_name, campaign_id)) or {"sent": "ERROR", "delivered": "ERROR", "viewed": "ERROR", "clicked": "ERROR"}
         rows.append([
             run_date,
             campaign_name,
@@ -1035,11 +1083,6 @@ def write_prospect_tab(sheet: gspread.Spreadsheet, tab_name: str, campaigns: lis
             stats["viewed"],
             stats["clicked"],
         ])
-        print(
-            f"    Sent={stats['sent']} | Delivered={stats['delivered']} | "
-            f"Viewed={stats['viewed']} | Clicked={stats['clicked']}"
-        )
-        time.sleep(1)
 
     if any("ERROR" in row[3:] for row in rows):
         print(f"  Skipped writing to '{tab_name}' because one or more API calls failed\n")
