@@ -3,6 +3,7 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta
+
 from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
@@ -49,7 +50,7 @@ async def run_agent(
     async def sse_generator():
         global active_process
         
-        def send_stage(stage_id: str, status: str, branch_taken: str = None):
+        def send_stage(stage_id: str, status: str, branch_taken: str | None = None):
             payload = {"id": stage_id, "status": status}
             if branch_taken is not None:
                 payload["branch_taken"] = branch_taken

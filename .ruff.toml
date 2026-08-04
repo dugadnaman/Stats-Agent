@@ -1,0 +1,11 @@
+# Ruff configuration file
+target-version = "py310"
+
+[lint]
+# Ignore warnings that are style-only or intentional in this automation codebase:
+# - BLE001: blind except Exception (standard in browser/DOM automation retry structures)
+# - S110: try-except-pass (standard when ignoring missing optional DOM elements)
+# - DTZ: timezone-naive datetimes (dates are processed as local daily strings YYYY-MM-DD)
+# - TRY: general Exception usage (used for reporting script failures)
+# - PLW0602: unused global declarations (used for readability of shared variables)
+ignore = ["BLE001", "S110", "DTZ", "TRY", "PLW0602"]

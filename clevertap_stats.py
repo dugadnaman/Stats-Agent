@@ -8,24 +8,27 @@ prospect campaign counts into separate WhatsApp and SMS tabs.
 
 from __future__ import annotations
 
-import sys
-print("Loading CleverTap Stats script, please wait (this can take 30-60s on macOS)...", flush=True)
+print(
+    "Loading CleverTap Stats script, please wait (this can take 30-60s on macOS)...",
+    flush=True,
+)
 
 import argparse
 import atexit
+import concurrent.futures
+import json
 import os
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
 
-import requests
-import json
-import threading
-import concurrent.futures
 import gspread
+import requests
 
 BASE_DIR = Path(__file__).resolve().parent
 ENV_FILE = BASE_DIR / ".env"
+
 
 def _load_groups(filename: str) -> dict[str, list[tuple[str, int]]]:
     path = BASE_DIR / filename
@@ -44,41 +47,10 @@ def _load_groups(filename: str) -> dict[str, list[tuple[str, int]]]:
         raw = json.load(f)
     return {group: [tuple(pair) for pair in entries] for group, entries in raw.items()}
 
+
 JOURNEYS = _load_groups("journeys.json")
 
 DAY_GROUPS = ("Day0", "Day5", "Day15")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 PROSPECT_GROUPS = {
@@ -127,7 +99,15 @@ CONCIERGE_GROUPS: dict[str, list[tuple[str, int]]] = {
     ]
 }
 
-SHEET_HEADER = ["Date", "Node Name", "Campaign ID", "Sent", "Delivered", "Viewed", "Clicked"]
+SHEET_HEADER = [
+    "Date",
+    "Node Name",
+    "Campaign ID",
+    "Sent",
+    "Delivered",
+    "Viewed",
+    "Clicked",
+]
 TAB_COLORS = {
     "Day0": "#2563EB",
     "Day5": "#0F766E",
@@ -163,7 +143,9 @@ SHEET_ID = os.getenv("SHEET_ID", "")
 SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE", "service_account.json")
 CT_COOKIE = os.getenv("CT_COOKIE", "")
 CT_CSRF_TOKEN = os.getenv("CT_CSRF_TOKEN", "")
-CT_BASE_URL = os.getenv("CT_BASE_URL", "https://in1.dashboard.clevertap.com/W8W-6R9-885Z")
+CT_BASE_URL = os.getenv(
+    "CT_BASE_URL", "https://in1.dashboard.clevertap.com/W8W-6R9-885Z"
+)
 CT_REFERER_URL = os.getenv(
     "CT_REFERER_URL",
     "https://in1.dashboard.clevertap.com/W8W-6R9-885Z/journeys/journey/239/report/node-stats",
@@ -178,7 +160,9 @@ GOOGLE_SCOPES = [
 API_MAX_RETRIES = 3
 SHEETS_MAX_RETRIES = 3
 RETRY_BASE_DELAY_SECONDS = 2
-SHEETS_CONNECT_TIMEOUT_SECONDS = float(os.getenv("SHEETS_CONNECT_TIMEOUT_SECONDS", "10"))
+SHEETS_CONNECT_TIMEOUT_SECONDS = float(
+    os.getenv("SHEETS_CONNECT_TIMEOUT_SECONDS", "10")
+)
 SHEETS_READ_TIMEOUT_SECONDS = float(os.getenv("SHEETS_READ_TIMEOUT_SECONDS", "20"))
 
 
@@ -187,6 +171,7 @@ session_client = requests.Session()
 playwright_instance = None
 context_instance = None
 page_instance = None
+
 
 def close_browser_at_exit() -> None:
     global playwright_instance, context_instance
@@ -198,11 +183,13 @@ def close_browser_at_exit() -> None:
     except Exception:
         pass
 
+
 atexit.register(close_browser_at_exit)
+
 
 def init_requests_session() -> None:
     global CT_COOKIE, CT_CSRF_TOKEN, session_client
-    
+
     jar = requests.cookies.RequestsCookieJar()
     if CT_COOKIE:
         for cookie_part in CT_COOKIE.split(";"):
@@ -213,14 +200,14 @@ def init_requests_session() -> None:
             if val.startswith('"') and val.endswith('"'):
                 val = val[1:-1]
             jar.set(name, val, domain="in1.dashboard.clevertap.com")
-            
+
     session_client.cookies = jar
     print("Initialized requests session with current cookies.")
 
 
 class CleverTapAuthError(Exception):
     """Raised when CleverTap authentication fails critically (e.g. session expired, MFA required, timeout)."""
-    pass
+
 
 
 def get_totp_token(secret: str) -> str:
@@ -229,27 +216,34 @@ def get_totp_token(secret: str) -> str:
     import hmac
     import struct
     import time
-    
+
     secret = secret.replace(" ", "").upper()
     missing_padding = len(secret) % 8
     if missing_padding:
         secret += "=" * (8 - missing_padding)
-        
+
     key = base64.b32decode(secret)
     intervals_no = int(time.time()) // 30
     msg = struct.pack(">Q", intervals_no)
     h = hmac.new(key, msg, hashlib.sha1).digest()
     o = h[19] & 15
-    token = (struct.unpack(">I", h[o:o+4])[0] & 0x7fffffff) % 1000000
+    token = (struct.unpack(">I", h[o : o + 4])[0] & 0x7FFFFFFF) % 1000000
     return f"{token:06d}"
 
 
-def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, manual: bool = False) -> None:
-    global CT_COOKIE, CT_CSRF_TOKEN, playwright_instance, context_instance, page_instance
-    
-    print(f"Starting CleverTap session refresh...", flush=True)
+def refresh_clevertap_session(
+    headed: bool = False, skip_logout: bool = False, manual: bool = False
+) -> None:
+    global \
+        CT_COOKIE, \
+        CT_CSRF_TOKEN, \
+        playwright_instance, \
+        context_instance, \
+        page_instance
+
+    print("Starting CleverTap session refresh...", flush=True)
     print(f"Headed mode: {headed}", flush=True)
-    
+
     try:
         print("Loading Playwright libraries...", flush=True)
         from playwright.sync_api import sync_playwright
@@ -257,80 +251,91 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
         raise CleverTapAuthError(
             "Playwright is not installed. Please run: pip install playwright && playwright install chromium"
         ) from e
-        
+
     try:
         if not playwright_instance:
             print("Initializing Playwright driver...", flush=True)
             playwright_instance = sync_playwright().start()
-            
+
         user_data_dir = BASE_DIR / ".playwright_user_data"
         launch_args = {
             "user_data_dir": str(user_data_dir),
             "headless": not headed,
-            "args": ["--disable-blink-features=AutomationControlled"]
+            "args": ["--disable-blink-features=AutomationControlled"],
         }
         # Do not use system Chrome channel on macOS to avoid AppleEvents automation permission prompt hangs
         # if headed:
         #     launch_args["channel"] = "chrome"
-            
+
         if context_instance:
             try:
                 context_instance.close()
             except Exception:
                 pass
-                
+
         print("Launching Chromium browser...", flush=True)
-        context_instance = playwright_instance.chromium.launch_persistent_context(**launch_args)
+        context_instance = playwright_instance.chromium.launch_persistent_context(
+            **launch_args
+        )
         context = context_instance
         context.set_default_timeout(3000)
         context.set_default_navigation_timeout(30000)
-        
+
         # Clear only CleverTap cookies to preserve Google's device trust footprint
         if not skip_logout:
             try:
                 all_cookies = context.cookies()
-                google_cookies = [c for c in all_cookies if "clevertap" not in c.get("domain", "").lower()]
+                google_cookies = [
+                    c
+                    for c in all_cookies
+                    if "clevertap" not in c.get("domain", "").lower()
+                ]
                 context.clear_cookies()
                 if google_cookies:
                     context.add_cookies(google_cookies)
             except Exception:
                 pass
-        
+
         page_instance = context.pages[0] if context.pages else context.new_page()
         page = page_instance
         page.set_viewport_size({"width": 1280, "height": 720})
-        
+
         captured_csrf = None
+
         def handle_request(request):
             nonlocal captured_csrf
             csrf = request.headers.get("x-clevertap-csrf-token")
             if csrf:
                 captured_csrf = csrf
-                
+
         page.on("request", handle_request)
-        
+
         url = "https://in1.dashboard.clevertap.com/W8W-6R9-885Z/"
-        
+
         if not skip_logout:
-            print("Force-signing out of Google account to show the complete login flow to the manager...")
+            print(
+                "Force-signing out of Google account to show the complete login flow to the manager..."
+            )
             page.goto("https://accounts.google.com/Logout")
             page.wait_for_timeout(3000)
-            
+
         print(f"Navigating to dashboard: {url}")
         page.goto(url)
         page.wait_for_timeout(3000)
-        
+
         current_url = page.url
         print(f"Current browser URL: {current_url}")
-        
+
         if "sso.clevertap.com" in current_url or "google.com" in current_url:
             if manual:
-                print("\n" + "="*80)
+                print("\n" + "=" * 80)
                 print("[MANUAL LOGIN MODE]")
-                print("Please log in to CleverTap/Google SSO manually in the browser window.")
+                print(
+                    "Please log in to CleverTap/Google SSO manually in the browser window."
+                )
                 print("Once you successfully land on the CleverTap dashboard page,")
                 print("return to this terminal and press ENTER to continue...")
-                print("="*80 + "\n")
+                print("=" * 80 + "\n")
                 try:
                     input("Press ENTER when you have successfully logged in: ")
                 except (KeyboardInterrupt, SystemExit):
@@ -338,12 +343,14 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
                     raise
                 logged_in = True
             else:
-                print("CleverTap login or Google SSO required. Starting automated login...")
-                
+                print(
+                    "CleverTap login or Google SSO required. Starting automated login..."
+                )
+
                 email = os.getenv("CLEVERTAP_EMAIL", "dev@attributics.com")
                 password = os.getenv("CLEVERTAP_PASSWORD")
                 totp_secret = os.getenv("CLEVERTAP_TOTP_SECRET")
-                
+
                 if not password or password == "PASTE_YOUR_PASSWORD_HERE":
                     if not headed:
                         context.close()
@@ -351,14 +358,15 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
                             "CLEVERTAP_PASSWORD is not configured in .env. Please fill in your password to enable headless login."
                         )
                     else:
-                        print("CLEVERTAP_PASSWORD is not configured in .env. Proceeding with manual login in headed browser window...")
-                
+                        print(
+                            "CLEVERTAP_PASSWORD is not configured in .env. Proceeding with manual login in headed browser window..."
+                        )
+
                 logged_in = False
-                
-            sms_clicked_try_another = False
+
             selection_clicked_try_another = False
             last_logged_url = ""
-            for attempt in range(120): # Up to 2 minutes timeout
+            for attempt in range(120):  # Up to 2 minutes timeout
                 if manual:
                     break
                 page.wait_for_timeout(1000)
@@ -366,50 +374,78 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
                 if curr_url != last_logged_url:
                     print(f"Current browser URL: {curr_url}")
                     last_logged_url = curr_url
-                    
-                if "in1.dashboard.clevertap.com" in curr_url and "google" not in curr_url and "accounts.youtube" not in curr_url and "error" not in curr_url.lower():
+
+                if (
+                    "in1.dashboard.clevertap.com" in curr_url
+                    and "google" not in curr_url
+                    and "accounts.youtube" not in curr_url
+                    and "error" not in curr_url.lower()
+                ):
                     print("Redirect to CleverTap dashboard detected! Login successful.")
                     logged_in = True
                     break
 
                 # Check for wrong password warning on Google page
                 try:
-                    body_text = page.locator('body').inner_text()
-                    if "Wrong password" in body_text or "Contraseña incorrecta" in body_text:
-                        print("\n[WARNING] Google reported: Wrong password. Please check CLEVERTAP_PASSWORD in your .env file.\n")
+                    body_text = page.locator("body").inner_text()
+                    if (
+                        "Wrong password" in body_text
+                        or "Contraseña incorrecta" in body_text
+                    ):
+                        print(
+                            "\n[WARNING] Google reported: Wrong password. Please check CLEVERTAP_PASSWORD in your .env file.\n"
+                        )
                 except Exception:
                     pass
 
                 # If headed and automated login is blocked or taking too long, fallback to manual login
                 if headed:
                     try:
-                        body_text = page.locator('body').inner_text()
-                        is_blocked = "not be secure" in body_text or "browser or app may not be secure" in body_text
+                        body_text = page.locator("body").inner_text()
+                        is_blocked = (
+                            "not be secure" in body_text
+                            or "browser or app may not be secure" in body_text
+                        )
                     except Exception:
                         is_blocked = False
 
                     if is_blocked or attempt >= 20:
-                        print("\n" + "="*80)
+                        print("\n" + "=" * 80)
                         print("[MANUAL FALLBACK DETECTED]")
                         if is_blocked:
-                            print("Google blocked automated login ('This browser or app may not be secure').")
+                            print(
+                                "Google blocked automated login ('This browser or app may not be secure')."
+                            )
                         else:
-                            print("Automated login is taking longer than expected / requires verification.")
-                        print("Please complete the login/verification manually in the headed browser window.")
-                        print("Once you successfully land on the CleverTap dashboard page,")
+                            print(
+                                "Automated login is taking longer than expected / requires verification."
+                            )
+                        print(
+                            "Please complete the login/verification manually in the headed browser window."
+                        )
+                        print(
+                            "Once you successfully land on the CleverTap dashboard page,"
+                        )
                         print("return to this terminal and press ENTER to continue...")
-                        print("="*80 + "\n")
+                        print("=" * 80 + "\n")
                         try:
                             input("Press ENTER when you have successfully logged in: ")
                             curr_url = page.url
-                            if "in1.dashboard.clevertap.com" in curr_url and "google" not in curr_url and "accounts.youtube" not in curr_url and "error" not in curr_url.lower():
-                                print("Redirect to CleverTap dashboard detected! Login successful.")
+                            if (
+                                "in1.dashboard.clevertap.com" in curr_url
+                                and "google" not in curr_url
+                                and "accounts.youtube" not in curr_url
+                                and "error" not in curr_url.lower()
+                            ):
+                                print(
+                                    "Redirect to CleverTap dashboard detected! Login successful."
+                                )
                                 logged_in = True
                                 break
                         except (KeyboardInterrupt, SystemExit):
                             context.close()
                             raise
-                    
+
                 # 1. Click "Continue with Google" on SSO page
                 if "sso.clevertap.com" in curr_url:
                     try:
@@ -420,7 +456,7 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
                             page.wait_for_timeout(2000)
                     except Exception:
                         pass
-                        
+
                 # 1.5 Click Google Account Chooser if visible
                 if "accountchooser" in curr_url:
                     try:
@@ -432,118 +468,156 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
                             continue
                     except Exception:
                         pass
-                        
+
                 # 2. Fill Google Email screen
                 try:
-                    email_input = page.locator('input[type="email"], input[name="identifier"]').first
+                    email_input = page.locator(
+                        'input[type="email"], input[name="identifier"]'
+                    ).first
                     if email_input.is_visible(timeout=1000):
                         email_input.click()
                         email_input.fill("")
                         email_input.press_sequentially(email, delay=100)
-                        page.locator('#identifierNext, button:has-text("Next"), button:has-text("Siguiente")').first.click()
+                        page.locator(
+                            '#identifierNext, button:has-text("Next"), button:has-text("Siguiente")'
+                        ).first.click()
                         print("Filled email and clicked next.")
                         page.wait_for_timeout(2000)
-                except Exception as e:
+                except Exception:
                     pass
-                    
+
                 # 3. Fill Google Password screen
                 try:
                     pwd_input = page.locator('input[type="password"]').first
-                    if pwd_input.is_visible(timeout=1000):
-                        if password and password != "PASTE_YOUR_PASSWORD_HERE":
-                            pwd_input.click()
-                            pwd_input.fill("")
-                            pwd_input.press_sequentially(password, delay=100)
-                            page.locator('#passwordNext, button:has-text("Next"), button:has-text("Siguiente")').first.click()
-                            print("Filled password and clicked next.")
-                            page.wait_for_timeout(2000)
-                except Exception as e:
+                    if pwd_input.is_visible(timeout=1000) and password and password != "PASTE_YOUR_PASSWORD_HERE":
+                        pwd_input.click()
+                        pwd_input.fill("")
+                        pwd_input.press_sequentially(password, delay=100)
+                        page.locator(
+                            '#passwordNext, button:has-text("Next"), button:has-text("Siguiente")'
+                        ).first.click()
+                        print("Filled password and clicked next.")
+                        page.wait_for_timeout(2000)
+                except Exception:
                     pass
-                    
+
                 # 3.5 Handle Google Challenge Selection screen (e.g. Choose how you want to sign in)
                 if "challenge/selection" in curr_url:
                     try:
                         # Check for authenticator option
-                        authenticator_option = page.locator('div[role="link"]:has-text("Authenticator"), div[role="button"]:has-text("Authenticator"), span:has-text("Authenticator"), li:has-text("Authenticator")').first
+                        authenticator_option = page.locator(
+                            'div[role="link"]:has-text("Authenticator"), div[role="button"]:has-text("Authenticator"), span:has-text("Authenticator"), li:has-text("Authenticator")'
+                        ).first
                         if authenticator_option.is_visible(timeout=1000):
                             authenticator_option.click()
                             print("Clicked Authenticator app option.")
                             page.wait_for_timeout(2000)
                             continue
-                            
+
                         # Prioritize phone option ending in 91 to send SMS (since 61 is locked out)
-                        phone_option_91 = page.locator('div[role="link"]:has-text("91"), div[role="button"]:has-text("91"), span:has-text("91"), li:has-text("91")').first
+                        phone_option_91 = page.locator(
+                            'div[role="link"]:has-text("91"), div[role="button"]:has-text("91"), span:has-text("91"), li:has-text("91")'
+                        ).first
                         if phone_option_91.is_visible(timeout=1000):
                             phone_option_91.click()
-                            print("Clicked phone option ending in 91 to bypass rate-limited option...")
+                            print(
+                                "Clicked phone option ending in 91 to bypass rate-limited option..."
+                            )
                             page.wait_for_timeout(2000)
                             continue
-                            
+
                         # If we haven't clicked Try another way yet, try it once
                         if not selection_clicked_try_another:
-                            try_another = page.locator('button:has-text("Try another way"), a:has-text("Try another way"), div[role="button"]:has-text("Try another way"), span:has-text("Try another way")').first
+                            try_another = page.locator(
+                                'button:has-text("Try another way"), a:has-text("Try another way"), div[role="button"]:has-text("Try another way"), span:has-text("Try another way")'
+                            ).first
                             if try_another.is_visible(timeout=1000):
                                 try_another.click()
-                                print("Clicked 'Try another way' to show other verification methods.")
+                                print(
+                                    "Clicked 'Try another way' to show other verification methods."
+                                )
                                 selection_clicked_try_another = True
                                 page.wait_for_timeout(2000)
                                 continue
-                                
+
                         # Fallback if only 61 is available (e.g. if we need to let the user manually deal with Google locks)
-                        phone_option_61 = page.locator('div[role="link"]:has-text("61"), div[role="button"]:has-text("61"), span:has-text("61"), li:has-text("61")').first
+                        phone_option_61 = page.locator(
+                            'div[role="link"]:has-text("61"), div[role="button"]:has-text("61"), span:has-text("61"), li:has-text("61")'
+                        ).first
                         if phone_option_61.is_visible(timeout=1000):
                             phone_option_61.click()
-                            print("Only phone option ending in 61 available. Clicked it to proceed...")
+                            print(
+                                "Only phone option ending in 61 available. Clicked it to proceed..."
+                            )
                             page.wait_for_timeout(2000)
                             continue
                     except Exception as e:
                         print(f"Debug exception in selection block: {e}")
-                        pass
-                        
+
                 # 3.8 Handle Google Phone Number Confirmation screen (challenge/ipp/collect)
                 if "challenge/ipp/collect" in curr_url:
                     try:
-                        page_text = page.locator('body').inner_text()
+                        page_text = page.locator("body").inner_text()
                         # If Google is asking to confirm the blocked 61 number, click 'Try another way' to go back
                         if "61" in page_text or "ending in 61" in page_text:
-                            try_another = page.locator('button:has-text("Try another way"), a:has-text("Try another way"), div[role="button"]:has-text("Try another way"), span:has-text("Try another way")').first
+                            try_another = page.locator(
+                                'button:has-text("Try another way"), a:has-text("Try another way"), div[role="button"]:has-text("Try another way"), span:has-text("Try another way")'
+                            ).first
                             if try_another.is_visible(timeout=1000):
                                 try_another.click()
-                                print("Detected rate-limited 61 confirmation page. Clicked 'Try another way' to return to selection...")
+                                print(
+                                    "Detected rate-limited 61 confirmation page. Clicked 'Try another way' to return to selection..."
+                                )
                                 page.wait_for_timeout(2000)
                                 continue
                     except Exception as e:
                         print(f"Debug exception in collect block: {e}")
-                        
-                    print("\n[ACTION REQUIRED] Google is asking to confirm your registered phone number.")
-                    print("Please type the registered phone number in the headed browser window to continue.")
+
+                    print(
+                        "\n[ACTION REQUIRED] Google is asking to confirm your registered phone number."
+                    )
+                    print(
+                        "Please type the registered phone number in the headed browser window to continue."
+                    )
                     page.wait_for_timeout(3000)
                     continue
-                    
+
                 # 4. Fill Google TOTP MFA screen (Authenticator app only)
                 try:
                     totp_input = page.locator('input[type="tel"], input#totpPin').first
                     if totp_input.is_visible(timeout=1000):
-                        page_text = page.locator('body').inner_text()
-                        is_sms_page = "challenge/ipp/verify" in curr_url or ("text message" in page_text.lower() and ("sent" in page_text.lower() or "code" in page_text.lower()))
+                        page_text = page.locator("body").inner_text()
+                        is_sms_page = "challenge/ipp/verify" in curr_url or (
+                            "text message" in page_text.lower()
+                            and (
+                                "sent" in page_text.lower()
+                                or "code" in page_text.lower()
+                            )
+                        )
                         if is_sms_page:
-                            print("\n[ACTION REQUIRED] Google is forcing SMS verification to your manager's number.")
+                            print(
+                                "\n[ACTION REQUIRED] Google is forcing SMS verification to your manager's number."
+                            )
                             try:
-                                sms_code = input("Please type the 6-digit SMS verification code here: ").strip()
+                                sms_code = input(
+                                    "Please type the 6-digit SMS verification code here: "
+                                ).strip()
                             except (KeyboardInterrupt, SystemExit):
                                 raise
                             except Exception:
                                 sms_code = ""
-                                
+
                             if sms_code:
                                 totp_input.click()
                                 totp_input.fill("")
                                 totp_input.press_sequentially(sms_code, delay=100)
-                                page.locator('#totpNext, button:has-text("Next"), button:has-text("Siguiente")').first.click()
+                                page.locator(
+                                    '#totpNext, button:has-text("Next"), button:has-text("Siguiente")'
+                                ).first.click()
                                 print("Submitted manually entered SMS code.")
                                 page.wait_for_timeout(3000)
                             continue
-                            
+
                         if totp_secret:
                             code = get_totp_token(totp_secret)
                             current_val = totp_input.input_value()
@@ -551,21 +625,23 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
                                 totp_input.click()
                                 totp_input.fill("")
                                 totp_input.press_sequentially(code, delay=100)
-                                page.locator('#totpNext, button:has-text("Next"), button:has-text("Siguiente")').first.click()
+                                page.locator(
+                                    '#totpNext, button:has-text("Next"), button:has-text("Siguiente")'
+                                ).first.click()
                                 print(f"Filled TOTP MFA code: {code} and clicked next.")
                                 page.wait_for_timeout(2000)
-                except Exception as e:
+                except Exception:
                     pass
-                    
+
             if not logged_in:
                 context.close()
                 raise CleverTapAuthError(
                     "SSO login automation timed out. Please run with --headed and verify credentials in .env."
                 )
-                
+
         page.wait_for_timeout(3000)
         cookies = context.cookies()
-            
+
     except Exception as e:
         if isinstance(e, CleverTapAuthError):
             raise
@@ -573,32 +649,34 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
 
     cookie_parts = []
     csrf_cookie_val = None
-    
+
     # Only keep cookies belonging to clevertap.com or subdomains
     clevertap_cookies = [c for c in cookies if "clevertap.com" in c.get("domain", "")]
-    cookie_names = [c['name'] for c in clevertap_cookies]
+    cookie_names = [c["name"] for c in clevertap_cookies]
     print(f"Debug: Found CleverTap cookies in browser context: {cookie_names}")
-    
+
     for c in clevertap_cookies:
         cookie_parts.append(f"{c['name']}={c['value']}")
         if c["name"] == "csrf":
             csrf_cookie_val = c["value"]
-            
+
     if not csrf_cookie_val:
         csrf_cookie_val = captured_csrf
-        print(f"Debug: csrf cookie not found. Captured CSRF header value: {captured_csrf}")
-        
+        print(
+            f"Debug: csrf cookie not found. Captured CSRF header value: {captured_csrf}"
+        )
+
     if not csrf_cookie_val:
         raise CleverTapAuthError(
             "Failed to extract CSRF token (csrf cookie/header not found). "
             f"Available CleverTap cookies: {cookie_names}"
         )
-        
+
     cookie_str = "; ".join(cookie_parts)
-    
+
     CT_COOKIE = cookie_str
     CT_CSRF_TOKEN = csrf_cookie_val
-    
+
     # Save refreshed session cookies and CSRF token back to .env
     try:
         if ENV_FILE.exists():
@@ -620,16 +698,19 @@ def refresh_clevertap_session(headed: bool = False, skip_logout: bool = False, m
             ENV_FILE.write_text("\n".join(lines) + "\n")
             print("Saved refreshed CleverTap session cookies to .env file.")
         else:
-            ENV_FILE.write_text(f'CT_COOKIE="{cookie_str}"\nCT_CSRF_TOKEN="{csrf_cookie_val}"\n')
+            ENV_FILE.write_text(
+                f'CT_COOKIE="{cookie_str}"\nCT_CSRF_TOKEN="{csrf_cookie_val}"\n'
+            )
             print("Created new .env file with refreshed CleverTap session cookies.")
     except Exception as e:
         print(f"Warning: Could not save refreshed cookies to .env: {e}")
-        
+
     init_requests_session()
     print("CleverTap session refreshed successfully!")
 
 
 session_lock = threading.Lock()
+
 
 def safe_refresh_session(old_csrf: str) -> None:
     with session_lock:
@@ -657,7 +738,9 @@ def validate_config() -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Pull CleverTap daily stats into Google Sheets.")
+    parser = argparse.ArgumentParser(
+        description="Pull CleverTap daily stats into Google Sheets."
+    )
     parser.add_argument(
         "--date",
         help="Date to pull in YYYY-MM-DD or YYYYMMDD format. Defaults to today.",
@@ -699,10 +782,12 @@ def parse_run_date(date_value: str | None) -> tuple[str, str]:
 
 
 def retry_delay(attempt: int) -> float:
-    return RETRY_BASE_DELAY_SECONDS * (2 ** attempt)
+    return RETRY_BASE_DELAY_SECONDS * (2**attempt)
 
 
-def append_rows_with_retry(worksheet: gspread.Worksheet, rows: list[list[object]], tab_name: str) -> bool:
+def append_rows_with_retry(
+    worksheet: gspread.Worksheet, rows: list[list[object]], tab_name: str
+) -> bool:
     for attempt in range(SHEETS_MAX_RETRIES):
         try:
             worksheet.append_rows(rows, value_input_option="USER_ENTERED")
@@ -731,17 +816,19 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
             report_url = f"{CT_BASE_URL}/notification/reports.html?id={campaign_id}"
             page_instance.goto(report_url)
             page_instance.wait_for_timeout(2000)
-            
+
             # If the page got redirected to login, log back in automatically!
             curr_url = page_instance.url
             if "sso.clevertap.com" in curr_url or "google.com" in curr_url:
-                print("Browser session expired/logged out in headed window. Re-authenticating automatically...")
+                print(
+                    "Browser session expired/logged out in headed window. Re-authenticating automatically..."
+                )
                 refresh_clevertap_session(headed=HEADED_MODE, skip_logout=True)
                 page_instance.goto(report_url)
                 page_instance.wait_for_timeout(2000)
         except Exception:
             pass
-            
+
     url = f"{CT_BASE_URL}/json/notification/calculateTrend.html"
     data = {"id": campaign_id, "from": CT_FROM_DATE, "to": today_str}
     session_refreshed = False
@@ -761,10 +848,14 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
                     "Chrome/148.0.0.0 Safari/537.36"
                 ),
             }
-            resp = session_client.post(url, headers=headers, data=data, params={"uc": "1"}, timeout=30)
+            resp = session_client.post(
+                url, headers=headers, data=data, params={"uc": "1"}, timeout=30
+            )
             if resp.status_code in [401, 403]:
                 if not session_refreshed:
-                    print(f"    Warning: CleverTap session expired (HTTP {resp.status_code}). Attempting to refresh session...")
+                    print(
+                        f"    Warning: CleverTap session expired (HTTP {resp.status_code}). Attempting to refresh session..."
+                    )
                     safe_refresh_session(current_csrf)
                     session_refreshed = True
                     continue
@@ -778,7 +869,9 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
                 payload = resp.json()
             except (ValueError, requests.exceptions.JSONDecodeError) as exc:
                 if not session_refreshed:
-                    print(f"    Warning: CleverTap response is not valid JSON. Attempting to refresh session... (Error: {exc})")
+                    print(
+                        f"    Warning: CleverTap response is not valid JSON. Attempting to refresh session... (Error: {exc})"
+                    )
                     safe_refresh_session(current_csrf)
                     session_refreshed = True
                     continue
@@ -790,7 +883,9 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
 
             if payload.get("success") is False:
                 if not session_refreshed:
-                    print(f"    Warning: CleverTap API returned success=false ({payload.get('error')}). Attempting to refresh session...")
+                    print(
+                        f"    Warning: CleverTap API returned success=false ({payload.get('error')}). Attempting to refresh session..."
+                    )
                     safe_refresh_session(current_csrf)
                     session_refreshed = True
                     continue
@@ -801,10 +896,14 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
 
             daily_data = payload.get("All")
             if not isinstance(daily_data, dict):
-                raise Exception("CleverTap response did not include the expected 'All' date data.")
+                raise Exception(
+                    "CleverTap response did not include the expected 'All' date data."
+                )
 
             if today_str not in daily_data:
-                raise Exception(f"CleverTap response did not include data for {today_str}.")
+                raise Exception(
+                    f"CleverTap response did not include data for {today_str}."
+                )
 
             today_entry = daily_data[today_str]
             if not isinstance(today_entry, dict):
@@ -837,9 +936,19 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
             time.sleep(delay)
         except Exception as exc:
             print(f"    Warning: Error fetching campaign {campaign_id}: {exc}")
-            return {"sent": "ERROR", "delivered": "ERROR", "viewed": "ERROR", "clicked": "ERROR"}
+            return {
+                "sent": "ERROR",
+                "delivered": "ERROR",
+                "viewed": "ERROR",
+                "clicked": "ERROR",
+            }
 
-    return {"sent": "ERROR", "delivered": "ERROR", "viewed": "ERROR", "clicked": "ERROR"}
+    return {
+        "sent": "ERROR",
+        "delivered": "ERROR",
+        "viewed": "ERROR",
+        "clicked": "ERROR",
+    }
 
 
 def get_or_create_tab(sheet: gspread.Spreadsheet, tab_name: str) -> gspread.Worksheet:
@@ -893,7 +1002,11 @@ def format_tab(sheet: gspread.Spreadsheet, worksheet: gspread.Worksheet) -> None
                     },
                     "cell": {
                         "userEnteredFormat": {
-                            "backgroundColor": {"red": 0.08, "green": 0.11, "blue": 0.17},
+                            "backgroundColor": {
+                                "red": 0.08,
+                                "green": 0.11,
+                                "blue": 0.17,
+                            },
                             "horizontalAlignment": "CENTER",
                             "textFormat": {
                                 "foregroundColor": {"red": 1, "green": 1, "blue": 1},
@@ -977,9 +1090,14 @@ def open_google_sheet() -> gspread.Spreadsheet:
     for attempt in range(SHEETS_MAX_RETRIES):
         try:
             client = gspread.authorize(creds)
-            client.set_timeout((SHEETS_CONNECT_TIMEOUT_SECONDS, SHEETS_READ_TIMEOUT_SECONDS))
+            client.set_timeout(
+                (SHEETS_CONNECT_TIMEOUT_SECONDS, SHEETS_READ_TIMEOUT_SECONDS)
+            )
             return client.open_by_key(SHEET_ID)
-        except (requests.exceptions.RequestException, gspread.exceptions.GSpreadException) as exc:
+        except (
+            requests.exceptions.RequestException,
+            gspread.exceptions.GSpreadException,
+        ) as exc:
             if attempt == SHEETS_MAX_RETRIES - 1:
                 raise RuntimeError(
                     "Failed connecting to Google Sheets after "
@@ -995,7 +1113,12 @@ def open_google_sheet() -> gspread.Spreadsheet:
             time.sleep(delay)
 
 
-def write_daily_tab(sheet: gspread.Spreadsheet, tab_name: str, campaigns: list[tuple[str, int]], run_date: str) -> None:
+def write_daily_tab(
+    sheet: gspread.Spreadsheet,
+    tab_name: str,
+    campaigns: list[tuple[str, int]],
+    run_date: str,
+) -> None:
     print(f"Journey: {tab_name} ({len(campaigns)} nodes)")
     worksheet = get_or_create_tab(sheet, tab_name)
     rows: list[list[object]] = []
@@ -1011,7 +1134,10 @@ def write_daily_tab(sheet: gspread.Spreadsheet, tab_name: str, campaigns: list[t
 
     results_map = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(fetch_one, name, cid): (name, cid) for name, cid in campaigns}
+        futures = {
+            executor.submit(fetch_one, name, cid): (name, cid)
+            for name, cid in campaigns
+        }
         for future in concurrent.futures.as_completed(futures):
             name, cid = futures[future]
             try:
@@ -1019,33 +1145,54 @@ def write_daily_tab(sheet: gspread.Spreadsheet, tab_name: str, campaigns: list[t
                 results_map[(name, cid)] = stats
             except Exception as exc:
                 print(f"  Error fetching {name} ({cid}): {exc}")
-                results_map[(name, cid)] = {"sent": "ERROR", "delivered": "ERROR", "viewed": "ERROR", "clicked": "ERROR"}
+                results_map[(name, cid)] = {
+                    "sent": "ERROR",
+                    "delivered": "ERROR",
+                    "viewed": "ERROR",
+                    "clicked": "ERROR",
+                }
 
     for node_name, campaign_id in campaigns:
-        stats = results_map.get((node_name, campaign_id)) or {"sent": "ERROR", "delivered": "ERROR", "viewed": "ERROR", "clicked": "ERROR"}
-        rows.append([
-            run_date,
-            node_name,
-            campaign_id,
-            stats["sent"],
-            stats["delivered"],
-            stats["viewed"],
-            stats["clicked"],
-        ])
+        stats = results_map.get((node_name, campaign_id)) or {
+            "sent": "ERROR",
+            "delivered": "ERROR",
+            "viewed": "ERROR",
+            "clicked": "ERROR",
+        }
+        rows.append(
+            [
+                run_date,
+                node_name,
+                campaign_id,
+                stats["sent"],
+                stats["delivered"],
+                stats["viewed"],
+                stats["clicked"],
+            ]
+        )
 
     if any("ERROR" in row[3:] for row in rows):
-        print(f"  Skipped writing to '{tab_name}' because one or more API calls failed\n")
+        print(
+            f"  Skipped writing to '{tab_name}' because one or more API calls failed\n"
+        )
         return
 
     if not append_rows_with_retry(worksheet, rows, tab_name):
-        print(f"  Skipped writing to '{tab_name}' due to repeated Google Sheets write failures\n")
+        print(
+            f"  Skipped writing to '{tab_name}' due to repeated Google Sheets write failures\n"
+        )
         return
 
     format_tab(sheet, worksheet)
     print(f"  Done: {len(rows)} rows written to '{tab_name}' tab\n")
 
 
-def write_prospect_tab(sheet: gspread.Spreadsheet, tab_name: str, campaigns: list[tuple[str, int]], run_date: str) -> None:
+def write_prospect_tab(
+    sheet: gspread.Spreadsheet,
+    tab_name: str,
+    campaigns: list[tuple[str, int]],
+    run_date: str,
+) -> None:
     print(f"Tab: {tab_name} ({len(campaigns)} selected campaigns)")
     worksheet = get_or_create_tab(sheet, tab_name)
     rows: list[list[object]] = []
@@ -1061,7 +1208,10 @@ def write_prospect_tab(sheet: gspread.Spreadsheet, tab_name: str, campaigns: lis
 
     results_map = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(fetch_one, name, cid): (name, cid) for name, cid in campaigns}
+        futures = {
+            executor.submit(fetch_one, name, cid): (name, cid)
+            for name, cid in campaigns
+        }
         for future in concurrent.futures.as_completed(futures):
             name, cid = futures[future]
             try:
@@ -1069,26 +1219,42 @@ def write_prospect_tab(sheet: gspread.Spreadsheet, tab_name: str, campaigns: lis
                 results_map[(name, cid)] = stats
             except Exception as exc:
                 print(f"  Error fetching {name} ({cid}): {exc}")
-                results_map[(name, cid)] = {"sent": "ERROR", "delivered": "ERROR", "viewed": "ERROR", "clicked": "ERROR"}
+                results_map[(name, cid)] = {
+                    "sent": "ERROR",
+                    "delivered": "ERROR",
+                    "viewed": "ERROR",
+                    "clicked": "ERROR",
+                }
 
     for campaign_name, campaign_id in campaigns:
-        stats = results_map.get((campaign_name, campaign_id)) or {"sent": "ERROR", "delivered": "ERROR", "viewed": "ERROR", "clicked": "ERROR"}
-        rows.append([
-            run_date,
-            campaign_name,
-            campaign_id,
-            stats["sent"],
-            stats["delivered"],
-            stats["viewed"],
-            stats["clicked"],
-        ])
+        stats = results_map.get((campaign_name, campaign_id)) or {
+            "sent": "ERROR",
+            "delivered": "ERROR",
+            "viewed": "ERROR",
+            "clicked": "ERROR",
+        }
+        rows.append(
+            [
+                run_date,
+                campaign_name,
+                campaign_id,
+                stats["sent"],
+                stats["delivered"],
+                stats["viewed"],
+                stats["clicked"],
+            ]
+        )
 
     if any("ERROR" in row[3:] for row in rows):
-        print(f"  Skipped writing to '{tab_name}' because one or more API calls failed\n")
+        print(
+            f"  Skipped writing to '{tab_name}' because one or more API calls failed\n"
+        )
         return
 
     if not append_rows_with_retry(worksheet, rows, tab_name):
-        print(f"  Skipped writing to '{tab_name}' due to repeated Google Sheets write failures\n")
+        print(
+            f"  Skipped writing to '{tab_name}' due to repeated Google Sheets write failures\n"
+        )
         return
 
     format_tab(sheet, worksheet)
@@ -1105,20 +1271,30 @@ def parse_tabs_filter(tabs_value: str | None) -> list[str]:
 
     if unknown:
         available = ", ".join(sorted(valid_tabs))
-        raise ValueError(f"Unknown tab(s): {', '.join(unknown)}. Available tabs: {available}")
+        raise ValueError(
+            f"Unknown tab(s): {', '.join(unknown)}. Available tabs: {available}"
+        )
 
     return requested
 
 
-def run(date_value: str | None = None, tabs_value: str | None = None, headed: bool = False, skip_logout: bool = False, manual: bool = False) -> None:
+def run(
+    date_value: str | None = None,
+    tabs_value: str | None = None,
+    headed: bool = False,
+    skip_logout: bool = False,
+    manual: bool = False,
+) -> None:
     global HEADED_MODE, CT_COOKIE, CT_CSRF_TOKEN
     HEADED_MODE = headed or manual
 
     validate_config()
-    
+
     if not CT_COOKIE or headed or manual:
         # Always refresh session via browser automation if forced by headed/manual flags or if cookies are missing
-        refresh_clevertap_session(headed=HEADED_MODE, skip_logout=skip_logout, manual=manual)
+        refresh_clevertap_session(
+            headed=HEADED_MODE, skip_logout=skip_logout, manual=manual
+        )
     else:
         init_requests_session()
 
@@ -1135,7 +1311,9 @@ def run(date_value: str | None = None, tabs_value: str | None = None, headed: bo
 
     print("Connected to Google Sheets\n")
 
-    tabs_to_run = requested_tabs or list(DAY_GROUPS) + list(CONCIERGE_GROUPS) + list(PROSPECT_GROUPS)
+    tabs_to_run = requested_tabs or list(DAY_GROUPS) + list(CONCIERGE_GROUPS) + list(
+        PROSPECT_GROUPS
+    )
 
     for tab_name in tabs_to_run:
         if tab_name in DAY_GROUPS:
@@ -1150,7 +1328,9 @@ def run(date_value: str | None = None, tabs_value: str | None = None, headed: bo
             write_prospect_tab(sheet, tab_name, PROSPECT_GROUPS[tab_name], api_date)
 
     if not requested_tabs and not CONCIERGE_GROUPS:
-        print("Concierge campaigns are not configured yet. Add their campaign IDs to CONCIERGE_GROUPS.\n")
+        print(
+            "Concierge campaigns are not configured yet. Add their campaign IDs to CONCIERGE_GROUPS.\n"
+        )
 
     print("All done! Check your Google Sheet.")
 
