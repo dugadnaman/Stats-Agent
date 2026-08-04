@@ -22,6 +22,7 @@ import requests
 import json
 import threading
 import concurrent.futures
+import gspread
 
 BASE_DIR = Path(__file__).resolve().parent
 ENV_FILE = BASE_DIR / ".env"
@@ -842,7 +843,6 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
 
 
 def get_or_create_tab(sheet: gspread.Spreadsheet, tab_name: str) -> gspread.Worksheet:
-    import gspread
     try:
         ws = sheet.worksheet(tab_name)
     except gspread.WorksheetNotFound:
@@ -967,7 +967,6 @@ def format_tab(sheet: gspread.Spreadsheet, worksheet: gspread.Worksheet) -> None
 
 
 def open_google_sheet() -> gspread.Spreadsheet:
-    import gspread
     from google.oauth2.service_account import Credentials
 
     creds = Credentials.from_service_account_file(
