@@ -55,19 +55,23 @@ jobs:
           echo '${{ secrets.SERVICE_ACCOUNT_JSON }}' > service_account.json
 
       - name: Run Stats Sync Script
+        env:
+          INPUT_DATE: ${{ github.event.inputs.date }}
+          INPUT_VERTICAL: ${{ github.event.inputs.vertical }}
+          INPUT_CUMULATIVE: ${{ github.event.inputs.cumulative }}
         run: |
-          ARGS=""
-          if [ -n "${{ github.event.inputs.date }}" ]; then
-            ARGS="$ARGS --date ${{ github.event.inputs.date }}"
+          ARGS=()
+          if [ -n "$INPUT_DATE" ]; then
+            ARGS+=("--date" "$INPUT_DATE")
           fi
-          if [ -n "${{ github.event.inputs.vertical }}" ]; then
-            ARGS="$ARGS --tabs ${{ github.event.inputs.vertical }}"
+          if [ -n "$INPUT_VERTICAL" ]; then
+            ARGS+=("--tabs" "$INPUT_VERTICAL")
           fi
-          if [ "${{ github.event.inputs.cumulative }}" = "true" ]; then
-            ARGS="$ARGS --cumulative"
+          if [ "$INPUT_CUMULATIVE" = "true" ]; then
+            ARGS+=("--cumulative")
           fi
           
-          python clevertap_stats.py $ARGS
+          python clevertap_stats.py "${ARGS[@]}"
         env:
           SHEET_ID: ${{ secrets.SHEET_ID }}
           CLEVERTAP_EMAIL: ${{ secrets.CLEVERTAP_EMAIL }}
