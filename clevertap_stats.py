@@ -15,6 +15,7 @@ print(
 
 import argparse
 import atexit
+import sys
 import concurrent.futures
 import json
 import os
@@ -809,6 +810,68 @@ def append_rows_with_retry(
     return False
 
 
+def preflight_session_check(api_date: str) -> None:
+    """Validate CleverTap session on the main thread before spawning workers.
+
+    Makes a single lightweight API call. If the session is expired (403),
+    refreshes it via Playwright *on the main thread* so that worker threads
+    never need to touch Playwright (which is not thread-safe).
+    """
+    url = f"{CT_BASE_URL}/json/notification/calculateTrend.html"
+    # Use the first Day0 campaign as a cheap probe
+    probe_id = JOURNEYS.get("Day0", [[("probe", 0)]])[0][1] if JOURNEYS.get("Day0") else 5243
+    data = {"id": probe_id, "from": CT_FROM_DATE, "to": api_date}
+
+    current_csrf = session_client.cookies.get("csrf", default=CT_CSRF_TOKEN)
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "content-type": "application/x-www-form-urlencoded",
+        "origin": "https://in1.dashboard.clevertap.com",
+        "referer": CT_REFERER_URL,
+        "x-clevertap-csrf-token": current_csrf,
+        "user-agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/148.0.0.0 Safari/537.36"
+        ),
+    }
+
+    try:
+        resp = session_client.post(
+            url, headers=headers, data=data, params={"uc": "1"}, timeout=15
+        )
+        if resp.status_code in [401, 403]:
+            print(
+                f"Pre-flight: session expired (HTTP {resp.status_code}). "
+                "Refreshing on main thread before starting workers..."
+            )
+            refresh_clevertap_session(headed=HEADED_MODE)
+            return
+
+        try:
+            payload = resp.json()
+        except (ValueError, requests.exceptions.JSONDecodeError):
+            print(
+                "Pre-flight: response not valid JSON. "
+                "Refreshing session on main thread..."
+            )
+            refresh_clevertap_session(headed=HEADED_MODE)
+            return
+
+        if payload.get("success") is False:
+            print(
+                f"Pre-flight: API returned success=false ({payload.get('error')}). "
+                "Refreshing session on main thread..."
+            )
+            refresh_clevertap_session(headed=HEADED_MODE)
+            return
+
+        print("Pre-flight: session is valid.")
+    except requests.exceptions.RequestException as exc:
+        print(f"Pre-flight: network error ({exc}). Refreshing session on main thread...")
+        refresh_clevertap_session(headed=HEADED_MODE)
+
+
 def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
     global page_instance
     if HEADED_MODE and page_instance:
@@ -1118,7 +1181,8 @@ def write_daily_tab(
     tab_name: str,
     campaigns: list[tuple[str, int]],
     run_date: str,
-) -> None:
+) -> bool:
+    """Fetch stats and write to sheet. Returns True on success, False on failure."""
     print(f"Journey: {tab_name} ({len(campaigns)} nodes)")
     worksheet = get_or_create_tab(sheet, tab_name)
     rows: list[list[object]] = []
@@ -1175,16 +1239,17 @@ def write_daily_tab(
         print(
             f"  Skipped writing to '{tab_name}' because one or more API calls failed\n"
         )
-        return
+        return False
 
     if not append_rows_with_retry(worksheet, rows, tab_name):
         print(
             f"  Skipped writing to '{tab_name}' due to repeated Google Sheets write failures\n"
         )
-        return
+        return False
 
     format_tab(sheet, worksheet)
     print(f"  Done: {len(rows)} rows written to '{tab_name}' tab\n")
+    return True
 
 
 def write_prospect_tab(
@@ -1192,7 +1257,8 @@ def write_prospect_tab(
     tab_name: str,
     campaigns: list[tuple[str, int]],
     run_date: str,
-) -> None:
+) -> bool:
+    """Fetch stats and write to sheet. Returns True on success, False on failure."""
     print(f"Tab: {tab_name} ({len(campaigns)} selected campaigns)")
     worksheet = get_or_create_tab(sheet, tab_name)
     rows: list[list[object]] = []
@@ -1249,16 +1315,17 @@ def write_prospect_tab(
         print(
             f"  Skipped writing to '{tab_name}' because one or more API calls failed\n"
         )
-        return
+        return False
 
     if not append_rows_with_retry(worksheet, rows, tab_name):
         print(
             f"  Skipped writing to '{tab_name}' due to repeated Google Sheets write failures\n"
         )
-        return
+        return False
 
     format_tab(sheet, worksheet)
     print(f"  Done: {len(rows)} rows written to '{tab_name}' tab\n")
+    return True
 
 
 def parse_tabs_filter(tabs_value: str | None) -> list[str]:
@@ -1311,26 +1378,40 @@ def run(
 
     print("Connected to Google Sheets\n")
 
+    # Validate session on the main thread before spawning any workers.
+    # This prevents the Playwright greenlet crash from concurrent refresh attempts.
+    print("Running pre-flight session check...")
+    preflight_session_check(api_date)
+
     tabs_to_run = requested_tabs or list(DAY_GROUPS) + list(CONCIERGE_GROUPS) + list(
         PROSPECT_GROUPS
     )
 
+    failed_tabs: list[str] = []
+
     for tab_name in tabs_to_run:
+        success = False
         if tab_name in DAY_GROUPS:
-            write_daily_tab(sheet, tab_name, JOURNEYS[tab_name], api_date)
-            continue
+            success = write_daily_tab(sheet, tab_name, JOURNEYS[tab_name], api_date)
+        elif tab_name in CONCIERGE_GROUPS:
+            success = write_daily_tab(sheet, tab_name, CONCIERGE_GROUPS[tab_name], api_date)
+        elif tab_name in PROSPECT_GROUPS:
+            success = write_prospect_tab(sheet, tab_name, PROSPECT_GROUPS[tab_name], api_date)
 
-        if tab_name in CONCIERGE_GROUPS:
-            write_daily_tab(sheet, tab_name, CONCIERGE_GROUPS[tab_name], api_date)
-            continue
-
-        if tab_name in PROSPECT_GROUPS:
-            write_prospect_tab(sheet, tab_name, PROSPECT_GROUPS[tab_name], api_date)
+        if not success:
+            failed_tabs.append(tab_name)
 
     if not requested_tabs and not CONCIERGE_GROUPS:
         print(
             "Concierge campaigns are not configured yet. Add their campaign IDs to CONCIERGE_GROUPS.\n"
         )
+
+    if failed_tabs:
+        print(
+            f"\nFAILED: The following tabs had errors and were NOT written: "
+            f"{', '.join(failed_tabs)}\n"
+        )
+        sys.exit(1)
 
     print("All done! Check your Google Sheet.")
 
