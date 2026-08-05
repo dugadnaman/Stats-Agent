@@ -1482,8 +1482,20 @@ def parse_tabs_filter(tabs_value: str | None) -> list[str]:
         return []
 
     requested = [tab.strip() for tab in tabs_value.split(",") if tab.strip()]
-    valid_tabs = set(DAY_GROUPS) | set(CONCIERGE_GROUPS) | set(PROSPECT_GROUPS)
-    unknown = [tab for tab in requested if tab not in valid_tabs]
+    valid_tabs = list(DAY_GROUPS) + list(CONCIERGE_GROUPS) + list(PROSPECT_GROUPS)
+    
+    # Create mapping of lowercase name to actual name
+    mapping = {tab.lower(): tab for tab in valid_tabs}
+    
+    matched = []
+    unknown = []
+    
+    for r in requested:
+        r_lower = r.lower()
+        if r_lower in mapping:
+            matched.append(mapping[r_lower])
+        else:
+            unknown.append(r)
 
     if unknown:
         available = ", ".join(sorted(valid_tabs))
@@ -1491,7 +1503,8 @@ def parse_tabs_filter(tabs_value: str | None) -> list[str]:
             f"Unknown tab(s): {', '.join(unknown)}. Available tabs: {available}"
         )
 
-    return requested
+    return matched
+
 
 
 def run(
