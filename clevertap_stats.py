@@ -768,6 +768,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Launch headed browser and pause to let user log in manually in the browser window.",
     )
+    parser.add_argument(
+        "--cumulative",
+        action="store_true",
+        help="Sum the stats across the specified date range and write a single aggregated row.",
+    )
     return parser.parse_args()
 
 
@@ -1249,6 +1254,7 @@ def write_daily_tab(
     tab_name: str,
     campaigns: list[tuple[str, int]],
     dates: list[tuple[str, str]],
+    cumulative: bool = False,
 ) -> bool:
     """Fetch stats and write to sheet. Returns True on success, False on failure."""
     print(f"Journey: {tab_name} ({len(campaigns)} nodes)")
@@ -1284,25 +1290,61 @@ def write_daily_tab(
                     for api_date in api_dates
                 }
 
-    for sheet_date, api_date in dates:
+    if cumulative:
+        start_sheet, _ = dates[0]
+        end_sheet, _ = dates[-1]
+        range_label = start_sheet if start_sheet == end_sheet else f"{start_sheet} to {end_sheet}"
+
         for node_name, campaign_id in campaigns:
-            stats = (results_map.get((node_name, campaign_id)) or {}).get(api_date) or {
-                "sent": "ERROR",
-                "delivered": "ERROR",
-                "viewed": "ERROR",
-                "clicked": "ERROR",
-            }
-            rows.append(
-                [
-                    sheet_date,
-                    node_name,
-                    campaign_id,
-                    stats["sent"],
-                    stats["delivered"],
-                    stats["viewed"],
-                    stats["clicked"],
-                ]
-            )
+            sent_sum = 0
+            delivered_sum = 0
+            viewed_sum = 0
+            clicked_sum = 0
+            has_error = False
+
+            for _, api_date in dates:
+                stats = (results_map.get((node_name, campaign_id)) or {}).get(api_date) or {
+                    "sent": "ERROR",
+                    "delivered": "ERROR",
+                    "viewed": "ERROR",
+                    "clicked": "ERROR",
+                }
+                if any(stats[k] == "ERROR" for k in ["sent", "delivered", "viewed", "clicked"]):
+                    has_error = True
+                    break
+                try:
+                    sent_sum += int(stats["sent"])
+                    delivered_sum += int(stats["delivered"])
+                    viewed_sum += int(stats["viewed"])
+                    clicked_sum += int(stats["clicked"])
+                except (ValueError, TypeError):
+                    has_error = True
+                    break
+
+            if has_error:
+                rows.append([range_label, node_name, campaign_id, "ERROR", "ERROR", "ERROR", "ERROR"])
+            else:
+                rows.append([range_label, node_name, campaign_id, sent_sum, delivered_sum, viewed_sum, clicked_sum])
+    else:
+        for sheet_date, api_date in dates:
+            for node_name, campaign_id in campaigns:
+                stats = (results_map.get((node_name, campaign_id)) or {}).get(api_date) or {
+                    "sent": "ERROR",
+                    "delivered": "ERROR",
+                    "viewed": "ERROR",
+                    "clicked": "ERROR",
+                }
+                rows.append(
+                    [
+                        sheet_date,
+                        node_name,
+                        campaign_id,
+                        stats["sent"],
+                        stats["delivered"],
+                        stats["viewed"],
+                        stats["clicked"],
+                    ]
+                )
 
     if any("ERROR" in row[3:] for row in rows):
         print(
@@ -1326,6 +1368,7 @@ def write_prospect_tab(
     tab_name: str,
     campaigns: list[tuple[str, int]],
     dates: list[tuple[str, str]],
+    cumulative: bool = False,
 ) -> bool:
     """Fetch stats and write to sheet. Returns True on success, False on failure."""
     print(f"Tab: {tab_name} ({len(campaigns)} selected campaigns)")
@@ -1361,25 +1404,61 @@ def write_prospect_tab(
                     for api_date in api_dates
                 }
 
-    for sheet_date, api_date in dates:
+    if cumulative:
+        start_sheet, _ = dates[0]
+        end_sheet, _ = dates[-1]
+        range_label = start_sheet if start_sheet == end_sheet else f"{start_sheet} to {end_sheet}"
+
         for campaign_name, campaign_id in campaigns:
-            stats = (results_map.get((campaign_name, campaign_id)) or {}).get(api_date) or {
-                "sent": "ERROR",
-                "delivered": "ERROR",
-                "viewed": "ERROR",
-                "clicked": "ERROR",
-            }
-            rows.append(
-                [
-                    sheet_date,
-                    campaign_name,
-                    campaign_id,
-                    stats["sent"],
-                    stats["delivered"],
-                    stats["viewed"],
-                    stats["clicked"],
-                ]
-            )
+            sent_sum = 0
+            delivered_sum = 0
+            viewed_sum = 0
+            clicked_sum = 0
+            has_error = False
+
+            for _, api_date in dates:
+                stats = (results_map.get((campaign_name, campaign_id)) or {}).get(api_date) or {
+                    "sent": "ERROR",
+                    "delivered": "ERROR",
+                    "viewed": "ERROR",
+                    "clicked": "ERROR",
+                }
+                if any(stats[k] == "ERROR" for k in ["sent", "delivered", "viewed", "clicked"]):
+                    has_error = True
+                    break
+                try:
+                    sent_sum += int(stats["sent"])
+                    delivered_sum += int(stats["delivered"])
+                    viewed_sum += int(stats["viewed"])
+                    clicked_sum += int(stats["clicked"])
+                except (ValueError, TypeError):
+                    has_error = True
+                    break
+
+            if has_error:
+                rows.append([range_label, campaign_name, campaign_id, "ERROR", "ERROR", "ERROR", "ERROR"])
+            else:
+                rows.append([range_label, campaign_name, campaign_id, sent_sum, delivered_sum, viewed_sum, clicked_sum])
+    else:
+        for sheet_date, api_date in dates:
+            for campaign_name, campaign_id in campaigns:
+                stats = (results_map.get((campaign_name, campaign_id)) or {}).get(api_date) or {
+                    "sent": "ERROR",
+                    "delivered": "ERROR",
+                    "viewed": "ERROR",
+                    "clicked": "ERROR",
+                }
+                rows.append(
+                    [
+                        sheet_date,
+                        campaign_name,
+                        campaign_id,
+                        stats["sent"],
+                        stats["delivered"],
+                        stats["viewed"],
+                        stats["clicked"],
+                    ]
+                )
 
     if any("ERROR" in row[3:] for row in rows):
         print(
@@ -1421,6 +1500,7 @@ def run(
     headed: bool = False,
     skip_logout: bool = False,
     manual: bool = False,
+    cumulative: bool = False,
 ) -> None:
     global HEADED_MODE, CT_COOKIE, CT_CSRF_TOKEN
     HEADED_MODE = headed or manual
@@ -1468,11 +1548,11 @@ def run(
     for tab_name in tabs_to_run:
         success = False
         if tab_name in DAY_GROUPS:
-            success = write_daily_tab(sheet, tab_name, JOURNEYS[tab_name], dates_to_run)
+            success = write_daily_tab(sheet, tab_name, JOURNEYS[tab_name], dates_to_run, cumulative)
         elif tab_name in CONCIERGE_GROUPS:
-            success = write_daily_tab(sheet, tab_name, CONCIERGE_GROUPS[tab_name], dates_to_run)
+            success = write_daily_tab(sheet, tab_name, CONCIERGE_GROUPS[tab_name], dates_to_run, cumulative)
         elif tab_name in PROSPECT_GROUPS:
-            success = write_prospect_tab(sheet, tab_name, PROSPECT_GROUPS[tab_name], dates_to_run)
+            success = write_prospect_tab(sheet, tab_name, PROSPECT_GROUPS[tab_name], dates_to_run, cumulative)
 
         if not success:
             failed_tabs.append(tab_name)
@@ -1494,4 +1574,11 @@ def run(
 
 if __name__ == "__main__":
     args = parse_args()
-    run(args.date, args.tabs, args.headed, args.skip_logout, args.manual)
+    run(
+        args.date,
+        args.tabs,
+        args.headed,
+        args.skip_logout,
+        args.manual,
+        args.cumulative,
+    )
