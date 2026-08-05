@@ -59,6 +59,15 @@ jobs:
           INPUT_DATE: ${{ github.event.inputs.date }}
           INPUT_VERTICAL: ${{ github.event.inputs.vertical }}
           INPUT_CUMULATIVE: ${{ github.event.inputs.cumulative }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          CLEVERTAP_EMAIL: ${{ secrets.CLEVERTAP_EMAIL }}
+          CLEVERTAP_PASSWORD: ${{ secrets.CLEVERTAP_PASSWORD }}
+          CLEVERTAP_TOTP_SECRET: ${{ secrets.CLEVERTAP_TOTP_SECRET }}
+          CT_BASE_URL: ${{ secrets.CT_BASE_URL }}
+          CT_REFERER_URL: ${{ secrets.CT_REFERER_URL }}
+          CT_COOKIE: ${{ secrets.CT_COOKIE }}
+          CT_CSRF_TOKEN: ${{ secrets.CT_CSRF_TOKEN }}
+          SERVICE_ACCOUNT_FILE: service_account.json
         run: |
           ARGS=()
           if [ -n "$INPUT_DATE" ]; then
@@ -72,13 +81,3 @@ jobs:
           fi
           
           python clevertap_stats.py "${ARGS[@]}"
-        env:
-          SHEET_ID: ${{ secrets.SHEET_ID }}
-          CLEVERTAP_EMAIL: ${{ secrets.CLEVERTAP_EMAIL }}
-          CLEVERTAP_PASSWORD: ${{ secrets.CLEVERTAP_PASSWORD }}
-          CLEVERTAP_TOTP_SECRET: ${{ secrets.CLEVERTAP_TOTP_SECRET }}
-          CT_BASE_URL: ${{ secrets.CT_BASE_URL }}
-          CT_REFERER_URL: ${{ secrets.CT_REFERER_URL }}
-          CT_COOKIE: ${{ secrets.CT_COOKIE }}
-          CT_CSRF_TOKEN: ${{ secrets.CT_CSRF_TOKEN }}
-          SERVICE_ACCOUNT_FILE: service_account.json
