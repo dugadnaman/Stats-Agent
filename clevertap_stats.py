@@ -771,15 +771,54 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def parse_run_date(date_value: str | None) -> tuple[str, str]:
+def parse_run_dates(date_value: str | None) -> list[tuple[str, str]]:
+    """
+    Parses a single date or a range of dates.
+    Supported range formats: YYYY-MM-DD:YYYY-MM-DD, YYYY-MM-DD to YYYY-MM-DD, YYYYMMDD:YYYYMMDD
+    Returns a list of (sheet_date, api_date) tuples.
+    """
+    from datetime import datetime, timedelta
+
     if not date_value:
         run_date = datetime.now()
-    else:
-        normalized = date_value.strip()
-        date_format = "%Y%m%d" if normalized.isdigit() else "%Y-%m-%d"
-        run_date = datetime.strptime(normalized, date_format)
+        return [(run_date.strftime("%Y-%m-%d"), run_date.strftime("%Y%m%d"))]
 
-    return run_date.strftime("%Y-%m-%d"), run_date.strftime("%Y%m%d")
+    date_value = date_value.strip()
+
+    # Check for date range separators
+    sep_used = None
+    for sep in [":", "to", "_", "/"]:
+        if sep in date_value:
+            sep_used = sep
+            break
+
+    if sep_used:
+        parts = date_value.split(sep_used)
+        if len(parts) != 2:
+            raise ValueError(f"Invalid date range format: {date_value}. Expected e.g. YYYY-MM-DD:YYYY-MM-DD")
+        
+        start_str = parts[0].strip()
+        end_str = parts[1].strip()
+
+        start_format = "%Y%m%d" if start_str.isdigit() else "%Y-%m-%d"
+        end_format = "%Y%m%d" if end_str.isdigit() else "%Y-%m-%d"
+
+        start_date = datetime.strptime(start_str, start_format)
+        end_date = datetime.strptime(end_str, end_format)
+
+        if start_date > end_date:
+            raise ValueError(f"Start date ({start_str}) cannot be after end date ({end_str})")
+
+        dates = []
+        curr = start_date
+        while curr <= end_date:
+            dates.append((curr.strftime("%Y-%m-%d"), curr.strftime("%Y%m%d")))
+            curr += timedelta(days=1)
+        return dates
+    else:
+        date_format = "%Y%m%d" if date_value.isdigit() else "%Y-%m-%d"
+        run_date = datetime.strptime(date_value, date_format)
+        return [(run_date.strftime("%Y-%m-%d"), run_date.strftime("%Y%m%d"))]
 
 
 def retry_delay(attempt: int) -> float:
@@ -884,8 +923,13 @@ def preflight_session_check(api_date: str) -> None:
         sys.exit(1)
 
 
-def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
+def get_todays_stats(campaign_id: int, today_str: str | list[str]) -> dict[str, dict[str, int | str]]:
     global page_instance
+    if isinstance(today_str, str):
+        api_dates = [today_str]
+    else:
+        api_dates = today_str
+
     if HEADED_MODE and page_instance:
         try:
             report_url = f"{CT_BASE_URL}/notification/reports.html?id={campaign_id}"
@@ -905,7 +949,7 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
             pass
 
     url = f"{CT_BASE_URL}/json/notification/calculateTrend.html"
-    data = {"id": campaign_id, "from": CT_FROM_DATE, "to": today_str}
+    data = {"id": campaign_id, "from": min(api_dates), "to": max(api_dates)}
     session_refreshed = False
 
     for attempt in range(API_MAX_RETRIES):
@@ -975,21 +1019,24 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
                     "CleverTap response did not include the expected 'All' date data."
                 )
 
-            if today_str not in daily_data:
-                raise Exception(
-                    f"CleverTap response did not include data for {today_str}."
-                )
-
-            today_entry = daily_data[today_str]
-            if not isinstance(today_entry, dict):
-                raise Exception("CleverTap response for today was not a JSON object.")
-
-            return {
-                "sent": today_entry.get("sent", 0),
-                "delivered": today_entry.get("delivered", 0),
-                "viewed": today_entry.get("viewed", 0),
-                "clicked": today_entry.get("clicked", 0),
-            }
+            res = {}
+            for api_date in api_dates:
+                entry = daily_data.get(api_date)
+                if not isinstance(entry, dict):
+                    res[api_date] = {
+                        "sent": 0,
+                        "delivered": 0,
+                        "viewed": 0,
+                        "clicked": 0,
+                    }
+                else:
+                    res[api_date] = {
+                        "sent": entry.get("sent", 0),
+                        "delivered": entry.get("delivered", 0),
+                        "viewed": entry.get("viewed", 0),
+                        "clicked": entry.get("clicked", 0),
+                    }
+            return res
         except CleverTapAuthError:
             # Propagate critical authentication errors to terminate the script
             raise
@@ -997,10 +1044,13 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
             if attempt == API_MAX_RETRIES - 1:
                 print(f"    Warning: Error fetching campaign {campaign_id}: {exc}")
                 return {
-                    "sent": "ERROR",
-                    "delivered": "ERROR",
-                    "viewed": "ERROR",
-                    "clicked": "ERROR",
+                    api_date: {
+                        "sent": "ERROR",
+                        "delivered": "ERROR",
+                        "viewed": "ERROR",
+                        "clicked": "ERROR",
+                    }
+                    for api_date in api_dates
                 }
 
             delay = retry_delay(attempt)
@@ -1012,17 +1062,23 @@ def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
         except Exception as exc:
             print(f"    Warning: Error fetching campaign {campaign_id}: {exc}")
             return {
-                "sent": "ERROR",
-                "delivered": "ERROR",
-                "viewed": "ERROR",
-                "clicked": "ERROR",
+                api_date: {
+                    "sent": "ERROR",
+                    "delivered": "ERROR",
+                    "viewed": "ERROR",
+                    "clicked": "ERROR",
+                }
+                for api_date in api_dates
             }
 
     return {
-        "sent": "ERROR",
-        "delivered": "ERROR",
-        "viewed": "ERROR",
-        "clicked": "ERROR",
+        api_date: {
+            "sent": "ERROR",
+            "delivered": "ERROR",
+            "viewed": "ERROR",
+            "clicked": "ERROR",
+        }
+        for api_date in api_dates
     }
 
 
@@ -1192,20 +1248,17 @@ def write_daily_tab(
     sheet: gspread.Spreadsheet,
     tab_name: str,
     campaigns: list[tuple[str, int]],
-    run_date: str,
+    dates: list[tuple[str, str]],
 ) -> bool:
     """Fetch stats and write to sheet. Returns True on success, False on failure."""
     print(f"Journey: {tab_name} ({len(campaigns)} nodes)")
     worksheet = get_or_create_tab(sheet, tab_name)
     rows: list[list[object]] = []
+    api_dates = [d[1] for d in dates]
 
     def fetch_one(node_name: str, campaign_id: int):
         print(f"  Fetching {node_name} (Campaign ID: {campaign_id})...")
-        stats = get_todays_stats(campaign_id, run_date)
-        print(
-            f"    {node_name}: Sent={stats['sent']} | Delivered={stats['delivered']} | "
-            f"Viewed={stats['viewed']} | Clicked={stats['clicked']}"
-        )
+        stats = get_todays_stats(campaign_id, api_dates)
         return node_name, campaign_id, stats
 
     results_map = {}
@@ -1222,30 +1275,34 @@ def write_daily_tab(
             except Exception as exc:
                 print(f"  Error fetching {name} ({cid}): {exc}")
                 results_map[(name, cid)] = {
-                    "sent": "ERROR",
-                    "delivered": "ERROR",
-                    "viewed": "ERROR",
-                    "clicked": "ERROR",
+                    api_date: {
+                        "sent": "ERROR",
+                        "delivered": "ERROR",
+                        "viewed": "ERROR",
+                        "clicked": "ERROR",
+                    }
+                    for api_date in api_dates
                 }
 
-    for node_name, campaign_id in campaigns:
-        stats = results_map.get((node_name, campaign_id)) or {
-            "sent": "ERROR",
-            "delivered": "ERROR",
-            "viewed": "ERROR",
-            "clicked": "ERROR",
-        }
-        rows.append(
-            [
-                run_date,
-                node_name,
-                campaign_id,
-                stats["sent"],
-                stats["delivered"],
-                stats["viewed"],
-                stats["clicked"],
-            ]
-        )
+    for sheet_date, api_date in dates:
+        for node_name, campaign_id in campaigns:
+            stats = (results_map.get((node_name, campaign_id)) or {}).get(api_date) or {
+                "sent": "ERROR",
+                "delivered": "ERROR",
+                "viewed": "ERROR",
+                "clicked": "ERROR",
+            }
+            rows.append(
+                [
+                    sheet_date,
+                    node_name,
+                    campaign_id,
+                    stats["sent"],
+                    stats["delivered"],
+                    stats["viewed"],
+                    stats["clicked"],
+                ]
+            )
 
     if any("ERROR" in row[3:] for row in rows):
         print(
@@ -1268,20 +1325,17 @@ def write_prospect_tab(
     sheet: gspread.Spreadsheet,
     tab_name: str,
     campaigns: list[tuple[str, int]],
-    run_date: str,
+    dates: list[tuple[str, str]],
 ) -> bool:
     """Fetch stats and write to sheet. Returns True on success, False on failure."""
     print(f"Tab: {tab_name} ({len(campaigns)} selected campaigns)")
     worksheet = get_or_create_tab(sheet, tab_name)
     rows: list[list[object]] = []
+    api_dates = [d[1] for d in dates]
 
     def fetch_one(campaign_name: str, campaign_id: int):
         print(f"  Fetching {campaign_name} (Campaign ID: {campaign_id})...")
-        stats = get_todays_stats(campaign_id, run_date)
-        print(
-            f"    {campaign_name}: Sent={stats['sent']} | Delivered={stats['delivered']} | "
-            f"Viewed={stats['viewed']} | Clicked={stats['clicked']}"
-        )
+        stats = get_todays_stats(campaign_id, api_dates)
         return campaign_name, campaign_id, stats
 
     results_map = {}
@@ -1298,30 +1352,34 @@ def write_prospect_tab(
             except Exception as exc:
                 print(f"  Error fetching {name} ({cid}): {exc}")
                 results_map[(name, cid)] = {
-                    "sent": "ERROR",
-                    "delivered": "ERROR",
-                    "viewed": "ERROR",
-                    "clicked": "ERROR",
+                    api_date: {
+                        "sent": "ERROR",
+                        "delivered": "ERROR",
+                        "viewed": "ERROR",
+                        "clicked": "ERROR",
+                    }
+                    for api_date in api_dates
                 }
 
-    for campaign_name, campaign_id in campaigns:
-        stats = results_map.get((campaign_name, campaign_id)) or {
-            "sent": "ERROR",
-            "delivered": "ERROR",
-            "viewed": "ERROR",
-            "clicked": "ERROR",
-        }
-        rows.append(
-            [
-                run_date,
-                campaign_name,
-                campaign_id,
-                stats["sent"],
-                stats["delivered"],
-                stats["viewed"],
-                stats["clicked"],
-            ]
-        )
+    for sheet_date, api_date in dates:
+        for campaign_name, campaign_id in campaigns:
+            stats = (results_map.get((campaign_name, campaign_id)) or {}).get(api_date) or {
+                "sent": "ERROR",
+                "delivered": "ERROR",
+                "viewed": "ERROR",
+                "clicked": "ERROR",
+            }
+            rows.append(
+                [
+                    sheet_date,
+                    campaign_name,
+                    campaign_id,
+                    stats["sent"],
+                    stats["delivered"],
+                    stats["viewed"],
+                    stats["clicked"],
+                ]
+            )
 
     if any("ERROR" in row[3:] for row in rows):
         print(
@@ -1377,10 +1435,16 @@ def run(
     else:
         init_requests_session()
 
-    sheet_date, api_date = parse_run_date(date_value)
+    dates_to_run = parse_run_dates(date_value)
     requested_tabs = parse_tabs_filter(tabs_value)
 
-    print(f"\nCleverTap Daily Stats Pull - {sheet_date}\n")
+    start_sheet, start_api = dates_to_run[0]
+    end_sheet, end_api = dates_to_run[-1]
+    if start_api == end_api:
+        print(f"\nCleverTap Daily Stats Pull - {start_sheet}\n")
+    else:
+        print(f"\nCleverTap Stats Pull - Range: {start_sheet} to {end_sheet}\n")
+
     print("Connecting to Google Sheets...")
     try:
         sheet = open_google_sheet()
@@ -1393,7 +1457,7 @@ def run(
     # Validate session on the main thread before spawning any workers.
     # This prevents the Playwright greenlet crash from concurrent refresh attempts.
     print("Running pre-flight session check...")
-    preflight_session_check(api_date)
+    preflight_session_check(end_api)
 
     tabs_to_run = requested_tabs or list(DAY_GROUPS) + list(CONCIERGE_GROUPS) + list(
         PROSPECT_GROUPS
@@ -1404,11 +1468,11 @@ def run(
     for tab_name in tabs_to_run:
         success = False
         if tab_name in DAY_GROUPS:
-            success = write_daily_tab(sheet, tab_name, JOURNEYS[tab_name], api_date)
+            success = write_daily_tab(sheet, tab_name, JOURNEYS[tab_name], dates_to_run)
         elif tab_name in CONCIERGE_GROUPS:
-            success = write_daily_tab(sheet, tab_name, CONCIERGE_GROUPS[tab_name], api_date)
+            success = write_daily_tab(sheet, tab_name, CONCIERGE_GROUPS[tab_name], dates_to_run)
         elif tab_name in PROSPECT_GROUPS:
-            success = write_prospect_tab(sheet, tab_name, PROSPECT_GROUPS[tab_name], api_date)
+            success = write_prospect_tab(sheet, tab_name, PROSPECT_GROUPS[tab_name], dates_to_run)
 
         if not success:
             failed_tabs.append(tab_name)
