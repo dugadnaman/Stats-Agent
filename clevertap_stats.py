@@ -836,40 +836,52 @@ def preflight_session_check(api_date: str) -> None:
         ),
     }
 
+    needs_refresh = False
+    refresh_reason = ""
+
     try:
         resp = session_client.post(
             url, headers=headers, data=data, params={"uc": "1"}, timeout=15
         )
         if resp.status_code in [401, 403]:
-            print(
-                f"Pre-flight: session expired (HTTP {resp.status_code}). "
-                "Refreshing on main thread before starting workers..."
-            )
-            refresh_clevertap_session(headed=HEADED_MODE)
-            return
+            needs_refresh = True
+            refresh_reason = f"session expired (HTTP {resp.status_code})"
+        else:
+            try:
+                payload = resp.json()
+            except (ValueError, requests.exceptions.JSONDecodeError):
+                needs_refresh = True
+                refresh_reason = "response not valid JSON"
 
-        try:
-            payload = resp.json()
-        except (ValueError, requests.exceptions.JSONDecodeError):
-            print(
-                "Pre-flight: response not valid JSON. "
-                "Refreshing session on main thread..."
-            )
-            refresh_clevertap_session(headed=HEADED_MODE)
-            return
+            if not needs_refresh and payload.get("success") is False:
+                needs_refresh = True
+                refresh_reason = f"API returned success=false ({payload.get('error')})"
 
-        if payload.get("success") is False:
-            print(
-                f"Pre-flight: API returned success=false ({payload.get('error')}). "
-                "Refreshing session on main thread..."
-            )
-            refresh_clevertap_session(headed=HEADED_MODE)
-            return
-
-        print("Pre-flight: session is valid.")
     except requests.exceptions.RequestException as exc:
-        print(f"Pre-flight: network error ({exc}). Refreshing session on main thread...")
+        needs_refresh = True
+        refresh_reason = f"network error ({exc})"
+
+    if not needs_refresh:
+        print("Pre-flight: session is valid.")
+        return
+
+    print(
+        f"Pre-flight: {refresh_reason}. "
+        "Refreshing session on main thread before starting workers..."
+    )
+    try:
         refresh_clevertap_session(headed=HEADED_MODE)
+    except CleverTapAuthError as exc:
+        print(
+            f"\nFATAL: Pre-flight session refresh failed: {exc}\n"
+            "\nThe CleverTap session cookies are expired and automatic login failed.\n"
+            "To fix this:\n"
+            "  1. Run locally: python clevertap_stats.py --headed\n"
+            "  2. Log in manually in the browser window\n"
+            "  3. Copy the refreshed CT_COOKIE and CT_CSRF_TOKEN from your .env file\n"
+            "  4. Update the GitHub repository secrets with the new values\n"
+        )
+        sys.exit(1)
 
 
 def get_todays_stats(campaign_id: int, today_str: str) -> dict[str, int | str]:
