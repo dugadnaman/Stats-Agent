@@ -11,7 +11,7 @@ on:
         description: 'Date to run (YYYY-MM-DD format. Leave blank for today)'
         required: false
         default: ''
-       cumulative:
+      cumulative:
         description: 'Sum counts across the date range instead of writing daily rows'
         type: boolean
         required: false
