@@ -725,6 +725,15 @@ def safe_refresh_session(old_csrf: str) -> None:
         current_csrf = session_client.cookies.get("csrf", default="")
         if current_csrf and current_csrf != old_csrf:
             return
+        # Playwright is NOT thread-safe — it can only be called from the main
+        # thread. If a worker thread hits a 403, it cannot refresh the session;
+        # raise so the worker reports an error cleanly instead of crashing.
+        if threading.current_thread() is not threading.main_thread():
+            raise CleverTapAuthError(
+                "Session expired (403) and cannot be refreshed from a worker thread. "
+                "The pre-flight check should have caught this. "
+                "Please update CT_COOKIE and CT_CSRF_TOKEN."
+            )
         refresh_clevertap_session(headed=HEADED_MODE)
 
 
@@ -1293,7 +1302,7 @@ def write_daily_tab(
         return node_name, campaign_id, stats
 
     results_map = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         futures = {
             executor.submit(fetch_one, name, cid): (name, cid)
             for name, cid in campaigns
@@ -1407,7 +1416,7 @@ def write_prospect_tab(
         return campaign_name, campaign_id, stats
 
     results_map = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         futures = {
             executor.submit(fetch_one, name, cid): (name, cid)
             for name, cid in campaigns
