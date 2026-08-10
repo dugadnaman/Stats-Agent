@@ -960,7 +960,7 @@ def get_todays_stats(campaign_id: int, today_str: str | list[str]) -> dict[str, 
     else:
         api_dates = today_str
 
-    if HEADED_MODE and page_instance:
+    if HEADED_MODE and page_instance and threading.current_thread() is threading.main_thread():
         try:
             report_url = f"{CT_BASE_URL}/notification/reports.html?id={campaign_id}"
             page_instance.goto(report_url)
