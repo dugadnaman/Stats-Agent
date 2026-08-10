@@ -259,10 +259,17 @@ def refresh_clevertap_session(
             playwright_instance = sync_playwright().start()
 
         user_data_dir = BASE_DIR / ".playwright_user_data"
+        args = ["--disable-blink-features=AutomationControlled"]
+        if not headed:
+            args.extend([
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage"
+            ])
         launch_args = {
             "user_data_dir": str(user_data_dir),
             "headless": not headed,
-            "args": ["--disable-blink-features=AutomationControlled"],
+            "args": args,
         }
         # Do not use system Chrome channel on macOS to avoid AppleEvents automation permission prompt hangs
         # if headed:

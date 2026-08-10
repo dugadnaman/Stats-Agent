@@ -48,7 +48,7 @@ jobs:
           key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
 
       - name: Install Playwright Browsers
-        run: playwright install chromium
+        run: playwright install --with-deps chromium
 
       - name: Create service_account.json
         run: |
