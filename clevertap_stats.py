@@ -930,23 +930,6 @@ def preflight_session_check(api_date: str) -> None:
         "Refreshing session on main thread before starting workers..."
     )
 
-    # On CI (GitHub Actions), Google SSO blocks headless automated logins from
-    # datacenter IPs. Attempting Playwright refresh will always hang and crash.
-    # Fail fast with actionable instructions instead.
-    is_ci = os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")
-    if is_ci:
-        print(
-            "\nFATAL: CleverTap session cookies are expired and cannot be "
-            "refreshed automatically on CI.\n"
-            "\nGoogle SSO blocks headless automated logins from datacenter IPs.\n"
-            "To fix this:\n"
-            "  1. Run locally: python clevertap_stats.py --headed\n"
-            "  2. Log in manually in the browser window\n"
-            "  3. Copy the refreshed CT_COOKIE and CT_CSRF_TOKEN from your .env file\n"
-            "  4. Update the GitHub repository secrets with the new values\n"
-        )
-        sys.exit(1)
-
     try:
         refresh_clevertap_session(headed=HEADED_MODE)
     except CleverTapAuthError as exc:

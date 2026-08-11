@@ -36,6 +36,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt python-dotenv --only-binary=:all:
 
+      - name: Install Xvfb (Virtual Display)
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
       - name: Get Playwright Version
         id: playwright-version
         run: echo "version=$(playwright --version)" >> "$GITHUB_OUTPUT"
@@ -65,11 +68,9 @@ jobs:
           CLEVERTAP_TOTP_SECRET: ${{ secrets.CLEVERTAP_TOTP_SECRET }}
           CT_BASE_URL: ${{ secrets.CT_BASE_URL }}
           CT_REFERER_URL: ${{ secrets.CT_REFERER_URL }}
-          CT_COOKIE: ${{ secrets.CT_COOKIE }}
-          CT_CSRF_TOKEN: ${{ secrets.CT_CSRF_TOKEN }}
           SERVICE_ACCOUNT_FILE: service_account.json
         run: |
-          ARGS=()
+          ARGS=("--headed" "--skip-logout")
           if [ -n "$INPUT_DATE" ]; then
             ARGS+=("--date" "$INPUT_DATE")
           fi
@@ -80,4 +81,5 @@ jobs:
             ARGS+=("--cumulative")
           fi
           
-          python clevertap_stats.py "${ARGS[@]}"
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" \
+            python clevertap_stats.py "${ARGS[@]}"
