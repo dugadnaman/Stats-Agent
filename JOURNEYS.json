@@ -155,6 +155,18 @@
     [
       "WA_Chambers Mahabaleshwar_Day0",
       9726
+    ],
+    [
+      "WA_JaipurRajasthan_Day0",
+      14640
+    ],
+    [
+      "WA_Agra_Day0",
+      14652
+    ],
+    [
+      "Day0_NatureResortJaipur",
+      14665
     ]
   ],
   "Day5": [
@@ -236,23 +248,23 @@
     ],
     [
       "WA_Mussoorie_Day5",
-      9446
+      9978
     ],
     [
       "WA_Nadiya Parao_Day5",
-      9459
+      9991
     ],
     [
       "WA_Patkote_Day5",
-      9472
+      15004
     ],
     [
       "WA_Alibaug_Day5",
-      9485
+      15017
     ],
     [
       "WA_Pavagadh_Day5",
-      9498
+      15030
     ],
     [
       "WA_Hatgad_Day5",
@@ -317,6 +329,18 @@
     [
       "WA_Chambers Mahabaleshwar_Day5",
       14466
+    ],
+    [
+      "WA_TreeHouseJaipur_Day5",
+      14687
+    ],
+    [
+      "WA_Agra_Day5",
+      14700
+    ],
+    [
+      "WA_NatureResortJaipur_Day5",
+      14713
     ]
   ],
   "Day15": [
@@ -475,6 +499,18 @@
     [
       "WA_Chambers Mahabaleshwar_Day15",
       9878
+    ],
+    [
+      "WA_TreeHouseJaipur_Day15",
+      14736
+    ],
+    [
+      "WA_Agra_Day15",
+      14749
+    ],
+    [
+      "WA_NatureResortJaipur_Day15",
+      14762
     ]
   ]
 }
