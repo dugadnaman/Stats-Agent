@@ -152,6 +152,8 @@ CT_REFERER_URL = os.getenv(
     "https://in1.dashboard.clevertap.com/W8W-6R9-885Z/journeys/journey/239/report/node-stats",
 )
 CT_FROM_DATE = os.getenv("CT_FROM_DATE", "20260419")
+SKIP_LOGOUT_MODE = False
+MANUAL_MODE = False
 
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -328,7 +330,7 @@ def refresh_clevertap_session(
             page.wait_for_timeout(3000)
 
         print(f"Navigating to dashboard: {url}")
-        page.goto(url)
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
         page.wait_for_timeout(3000)
 
         current_url = page.url
@@ -931,7 +933,7 @@ def preflight_session_check(api_date: str) -> None:
     )
 
     try:
-        refresh_clevertap_session(headed=HEADED_MODE)
+        refresh_clevertap_session(headed=HEADED_MODE, skip_logout=SKIP_LOGOUT_MODE, manual=MANUAL_MODE)
     except CleverTapAuthError as exc:
         print(
             f"\nFATAL: Pre-flight session refresh failed: {exc}\n"
@@ -1532,8 +1534,10 @@ def run(
     manual: bool = False,
     cumulative: bool = False,
 ) -> None:
-    global HEADED_MODE, CT_COOKIE, CT_CSRF_TOKEN
+    global HEADED_MODE, SKIP_LOGOUT_MODE, MANUAL_MODE, CT_COOKIE, CT_CSRF_TOKEN
     HEADED_MODE = headed or manual
+    SKIP_LOGOUT_MODE = skip_logout
+    MANUAL_MODE = manual
 
     validate_config()
 
