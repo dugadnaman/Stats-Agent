@@ -794,6 +794,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _parse_single_date(d_str: str) -> datetime:
+    d_str = d_str.strip()
+    if d_str.isdigit() and len(d_str) == 8:
+        return datetime.strptime(d_str, "%Y%m%d")
+    for fmt in ("%Y-%m-%d", "%Y-%d-%m", "%d-%m-%Y", "%Y/%m/%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(d_str, fmt)
+        except ValueError:
+            pass
+    raise ValueError(f"Unable to parse date: {d_str}. Expected format: YYYY-MM-DD")
+
+
 def parse_run_dates(date_value: str | None) -> list[tuple[str, str]]:
     """
     Parses a single date or a range of dates.
@@ -810,7 +822,7 @@ def parse_run_dates(date_value: str | None) -> list[tuple[str, str]]:
 
     # Check for date range separators
     sep_used = None
-    for sep in [":", "to", "_", "/"]:
+    for sep in [":", " to ", "_"]:
         if sep in date_value:
             sep_used = sep
             break
@@ -819,18 +831,12 @@ def parse_run_dates(date_value: str | None) -> list[tuple[str, str]]:
         parts = date_value.split(sep_used)
         if len(parts) != 2:
             raise ValueError(f"Invalid date range format: {date_value}. Expected e.g. YYYY-MM-DD:YYYY-MM-DD")
-        
-        start_str = parts[0].strip()
-        end_str = parts[1].strip()
 
-        start_format = "%Y%m%d" if start_str.isdigit() else "%Y-%m-%d"
-        end_format = "%Y%m%d" if end_str.isdigit() else "%Y-%m-%d"
-
-        start_date = datetime.strptime(start_str, start_format)
-        end_date = datetime.strptime(end_str, end_format)
+        start_date = _parse_single_date(parts[0])
+        end_date = _parse_single_date(parts[1])
 
         if start_date > end_date:
-            raise ValueError(f"Start date ({start_str}) cannot be after end date ({end_str})")
+            raise ValueError(f"Start date ({parts[0]}) cannot be after end date ({parts[1]})")
 
         dates = []
         curr = start_date
@@ -839,10 +845,8 @@ def parse_run_dates(date_value: str | None) -> list[tuple[str, str]]:
             curr += timedelta(days=1)
         return dates
     else:
-        date_format = "%Y%m%d" if date_value.isdigit() else "%Y-%m-%d"
-        run_date = datetime.strptime(date_value, date_format)
+        run_date = _parse_single_date(date_value)
         return [(run_date.strftime("%Y-%m-%d"), run_date.strftime("%Y%m%d"))]
-
 
 def retry_delay(attempt: int) -> float:
     return RETRY_BASE_DELAY_SECONDS * (2**attempt)
