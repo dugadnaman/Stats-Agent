@@ -399,6 +399,10 @@ def refresh_clevertap_session(
             selection_clicked_try_another = False
             clicked_try_another_urls: set[str] = set()
             wrong_password_seen = False
+            captcha_seen = False
+            email_submit_count = 0
+            password_submit_count = 0
+            password_stall_logged = False
             last_logged_url = ""
             idle_attempts = 0
 
@@ -465,7 +469,8 @@ def refresh_clevertap_session(
                 except Exception:
                     body_text = ""
 
-                # Check for wrong password warning on Google page
+                # Check for wrong password or CAPTCHA on Google page
+                body_lower = body_text.lower()
                 if (
                     "Wrong password" in body_text
                     or "Contraseña incorrecta" in body_text
@@ -481,10 +486,25 @@ def refresh_clevertap_session(
                             "Google rejected login: Wrong password. Please verify CLEVERTAP_PASSWORD."
                         )
 
+                if (
+                    "type the text you hear or see" in body_lower
+                    or "enter the characters" in body_lower
+                ):
+                    if not captcha_seen:
+                        print(
+                            "\n[WARNING] Google is presenting a CAPTCHA challenge.\n"
+                        )
+                        captcha_seen = True
+                    if not interactive:
+                        context.close()
+                        raise CleverTapAuthError(
+                            f"Google presented a CAPTCHA challenge at URL: {curr_url}"
+                        )
+
                 # Check if Google explicitly blocked the browser
                 is_blocked = (
-                    "not be secure" in body_text
-                    or "browser or app may not be secure" in body_text
+                    "not be secure" in body_lower
+                    or "browser or app may not be secure" in body_lower
                 )
                 if is_blocked:
                     if headed and interactive:
@@ -532,16 +552,26 @@ def refresh_clevertap_session(
                     email_input = page.locator(
                         'input[type="email"], input[name="identifier"]'
                     ).first
-                    if email_input.is_visible(timeout=1000):
-                        email_input.click()
-                        email_input.fill("")
-                        email_input.press_sequentially(email, delay=100)
-                        page.locator(
-                            '#identifierNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
-                        ).first.click()
-                        print("Filled email and clicked next.")
-                        progress_made = True
-                        page.wait_for_timeout(2000)
+                    if email_input.is_visible(timeout=1000) and email_submit_count < 3:
+                        if email_input.input_value() != email:
+                            email_input.click()
+                            email_input.fill("")
+                            email_input.press_sequentially(email, delay=100)
+                            page.locator(
+                                '#identifierNext button:visible, #identifierNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
+                            ).first.click()
+                            email_submit_count += 1
+                            print("Filled email and clicked next.")
+                            progress_made = True
+                            page.wait_for_timeout(2000)
+                        elif idle_attempts >= 4:
+                            page.locator(
+                                '#identifierNext button:visible, #identifierNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
+                            ).first.click()
+                            email_submit_count += 1
+                            print("Clicked next on email screen.")
+                            progress_made = True
+                            page.wait_for_timeout(2000)
                 except Exception:
                     pass
 
@@ -550,19 +580,53 @@ def refresh_clevertap_session(
                     pwd_input = page.locator('input[type="password"]').first
                     if (
                         not wrong_password_seen
+                        and not captcha_seen
                         and pwd_input.is_visible(timeout=1000)
                         and password
                         and password != "PASTE_YOUR_PASSWORD_HERE"
                     ):
-                        pwd_input.click()
-                        pwd_input.fill("")
-                        pwd_input.press_sequentially(password, delay=100)
-                        page.locator(
-                            '#passwordNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
-                        ).first.click()
-                        print("Filled password and clicked next.")
-                        progress_made = True
-                        page.wait_for_timeout(2000)
+                        if password_submit_count < 3:
+                            if pwd_input.input_value() != password:
+                                pwd_input.click()
+                                pwd_input.fill("")
+                                pwd_input.press_sequentially(password, delay=100)
+                                page.locator(
+                                    '#passwordNext button:visible, #passwordNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
+                                ).first.click()
+                                password_submit_count += 1
+                                print("Filled password and clicked next.")
+                                progress_made = True
+                                page.wait_for_timeout(2000)
+                            elif idle_attempts >= 4:
+                                page.locator(
+                                    '#passwordNext button:visible, #passwordNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
+                                ).first.click()
+                                password_submit_count += 1
+                                print("Clicked next on password screen.")
+                                progress_made = True
+                                page.wait_for_timeout(2000)
+                        elif not password_stall_logged:
+                            snippet = " | ".join(
+                                line.strip()
+                                for line in body_text.splitlines()
+                                if line.strip()
+                            )[:300]
+                            print(
+                                f"Password screen did not advance after {password_submit_count} attempts. Page text: {snippet}"
+                            )
+                            password_stall_logged = True
+                        elif not interactive and idle_attempts >= 15:
+                            snippet = " | ".join(
+                                line.strip()
+                                for line in body_text.splitlines()
+                                if line.strip()
+                            )[:300]
+                            context.close()
+                            raise CleverTapAuthError(
+                                f"Google password screen did not advance at {curr_url}. Page text: {snippet}"
+                            )
+                except CleverTapAuthError:
+                    raise
                 except Exception:
                     pass
 
@@ -718,7 +782,7 @@ def refresh_clevertap_session(
                                 totp_input.fill("")
                                 totp_input.press_sequentially(sms_code, delay=100)
                                 page.locator(
-                                    '#totpNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
+                                    '#totpNext button:visible, #totpNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
                                 ).first.click()
                                 print("Submitted manually entered SMS code.")
                                 progress_made = True
@@ -733,7 +797,7 @@ def refresh_clevertap_session(
                                 totp_input.fill("")
                                 totp_input.press_sequentially(code, delay=100)
                                 page.locator(
-                                    '#totpNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
+                                    '#totpNext button:visible, #totpNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
                                 ).first.click()
                                 print(f"Filled TOTP MFA code: {code} and clicked next.")
                                 progress_made = True
@@ -791,9 +855,17 @@ def refresh_clevertap_session(
 
             if not logged_in:
                 final_url = page.url
+                try:
+                    final_snippet = " | ".join(
+                        line.strip()
+                        for line in page.locator("body").inner_text(timeout=1000).splitlines()
+                        if line.strip()
+                    )[:300]
+                except Exception:
+                    final_snippet = ""
                 context.close()
                 raise CleverTapAuthError(
-                    f"SSO login automation timed out at URL: {final_url}. Please run with --headed and verify credentials in .env."
+                    f"SSO login automation timed out at URL: {final_url}. Page text: {final_snippet}"
                 )
         page.wait_for_timeout(3000)
         cookies = context.cookies()
