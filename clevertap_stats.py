@@ -15,10 +15,10 @@ print(
 
 import argparse
 import atexit
-import sys
 import concurrent.futures
 import json
 import os
+import sys
 import threading
 import time
 from datetime import datetime
@@ -26,6 +26,11 @@ from pathlib import Path
 
 import gspread
 import requests
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(line_buffering=True)
 
 BASE_DIR = Path(__file__).resolve().parent
 ENV_FILE = BASE_DIR / ".env"
@@ -276,8 +281,10 @@ def refresh_clevertap_session(
             args.extend([
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage"
+                "--disable-dev-shm-usage",
             ])
+        elif os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
+            args.append("--disable-dev-shm-usage")
         launch_args = {
             "user_data_dir": str(user_data_dir),
             "headless": not headed,
@@ -852,6 +859,16 @@ def refresh_clevertap_session(
                         logged_in = True
                         break
                     idle_attempts = 0
+                elif not interactive and idle_attempts >= 30:
+                    snippet = " | ".join(
+                        line.strip()
+                        for line in body_text.splitlines()
+                        if line.strip()
+                    )[:300]
+                    context.close()
+                    raise CleverTapAuthError(
+                        f"SSO login automation stalled after {idle_attempts} idle attempts at URL: {curr_url}. Page text: {snippet}"
+                    )
 
             if not logged_in:
                 final_url = page.url
