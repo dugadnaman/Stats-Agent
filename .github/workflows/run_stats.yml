@@ -66,11 +66,16 @@ jobs:
           CLEVERTAP_EMAIL: ${{ secrets.CLEVERTAP_EMAIL }}
           CLEVERTAP_PASSWORD: ${{ secrets.CLEVERTAP_PASSWORD }}
           CLEVERTAP_TOTP_SECRET: ${{ secrets.CLEVERTAP_TOTP_SECRET }}
+          CT_COOKIE: ${{ secrets.CT_COOKIE }}
+          CT_CSRF_TOKEN: ${{ secrets.CT_CSRF_TOKEN }}
           CT_BASE_URL: ${{ secrets.CT_BASE_URL }}
           CT_REFERER_URL: ${{ secrets.CT_REFERER_URL }}
           SERVICE_ACCOUNT_FILE: service_account.json
         run: |
-          ARGS=("--headed" "--skip-logout")
+          ARGS=()
+          if [ -z "$CT_COOKIE" ] || [ -z "$CT_CSRF_TOKEN" ]; then
+            ARGS+=("--headed" "--skip-logout")
+          fi
           if [ -n "$INPUT_DATE" ]; then
             ARGS+=("--date" "$INPUT_DATE")
           fi
