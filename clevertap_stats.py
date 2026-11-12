@@ -234,6 +234,16 @@ def get_totp_token(secret: str) -> str:
     return f"{token:06d}"
 
 
+def is_interactive_session() -> bool:
+    if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
+        return False
+    return bool(
+        sys.stdin is not None
+        and hasattr(sys.stdin, "isatty")
+        and sys.stdin.isatty()
+    )
+
+
 def refresh_clevertap_session(
     headed: bool = False, skip_logout: bool = False, manual: bool = False
 ) -> None:
@@ -336,8 +346,15 @@ def refresh_clevertap_session(
         current_url = page.url
         print(f"Current browser URL: {current_url}")
 
+        interactive = is_interactive_session()
+
         if "sso.clevertap.com" in current_url or "google.com" in current_url:
             if manual:
+                if not interactive:
+                    context.close()
+                    raise CleverTapAuthError(
+                        "Manual login mode (--manual) requires an interactive terminal."
+                    )
                 print("\n" + "=" * 80)
                 print("[MANUAL LOGIN MODE]")
                 print(
@@ -348,6 +365,11 @@ def refresh_clevertap_session(
                 print("=" * 80 + "\n")
                 try:
                     input("Press ENTER when you have successfully logged in: ")
+                except EOFError as e:
+                    context.close()
+                    raise CleverTapAuthError(
+                        "Manual login mode failed: stdin is not interactive (EOF)."
+                    ) from e
                 except (KeyboardInterrupt, SystemExit):
                     context.close()
                     raise
@@ -357,15 +379,15 @@ def refresh_clevertap_session(
                     "CleverTap login or Google SSO required. Starting automated login..."
                 )
 
-                email = os.getenv("CLEVERTAP_EMAIL", "dev@attributics.com")
+                email = os.getenv("CLEVERTAP_EMAIL") or "dev@attributics.com"
                 password = os.getenv("CLEVERTAP_PASSWORD")
                 totp_secret = os.getenv("CLEVERTAP_TOTP_SECRET")
 
                 if not password or password == "PASTE_YOUR_PASSWORD_HERE":
-                    if not headed:
+                    if not headed or not interactive:
                         context.close()
                         raise CleverTapAuthError(
-                            "CLEVERTAP_PASSWORD is not configured in .env. Please fill in your password to enable headless login."
+                            "CLEVERTAP_PASSWORD is not configured in .env. Please fill in your password to enable automated login."
                         )
                     else:
                         print(
@@ -375,15 +397,58 @@ def refresh_clevertap_session(
                 logged_in = False
 
             selection_clicked_try_another = False
+            clicked_try_another_urls: set[str] = set()
+            wrong_password_seen = False
             last_logged_url = ""
+            idle_attempts = 0
+
+            def prompt_manual_fallback(blocked: bool) -> bool:
+                print("\n" + "=" * 80)
+                print("[MANUAL FALLBACK DETECTED]")
+                if blocked:
+                    print(
+                        "Google blocked automated login ('This browser or app may not be secure')."
+                    )
+                else:
+                    print(
+                        "Automated login is taking longer than expected / requires verification."
+                    )
+                print(
+                    "Please complete the login/verification manually in the headed browser window."
+                )
+                print(
+                    "Once you successfully land on the CleverTap dashboard page,"
+                )
+                print("return to this terminal and press ENTER to continue...")
+                print("=" * 80 + "\n")
+                try:
+                    input("Press ENTER when you have successfully logged in: ")
+                except EOFError as e:
+                    context.close()
+                    raise CleverTapAuthError(
+                        "Manual login fallback failed: stdin is not interactive (EOF)."
+                    ) from e
+                except (KeyboardInterrupt, SystemExit):
+                    context.close()
+                    raise
+                post_url = page.url
+                return (
+                    "in1.dashboard.clevertap.com" in post_url
+                    and "google" not in post_url
+                    and "accounts.youtube" not in post_url
+                    and "error" not in post_url.lower()
+                )
+
             for attempt in range(120):  # Up to 2 minutes timeout
                 if manual:
                     break
+                progress_made = False
                 page.wait_for_timeout(1000)
                 curr_url = page.url
                 if curr_url != last_logged_url:
                     print(f"Current browser URL: {curr_url}")
                     last_logged_url = curr_url
+                    progress_made = True
 
                 if (
                     "in1.dashboard.clevertap.com" in curr_url
@@ -395,66 +460,47 @@ def refresh_clevertap_session(
                     logged_in = True
                     break
 
-                # Check for wrong password warning on Google page
                 try:
-                    body_text = page.locator("body").inner_text()
-                    if (
-                        "Wrong password" in body_text
-                        or "Contraseña incorrecta" in body_text
-                    ):
+                    body_text = page.locator("body").inner_text(timeout=1000)
+                except Exception:
+                    body_text = ""
+
+                # Check for wrong password warning on Google page
+                if (
+                    "Wrong password" in body_text
+                    or "Contraseña incorrecta" in body_text
+                ):
+                    if not wrong_password_seen:
                         print(
                             "\n[WARNING] Google reported: Wrong password. Please check CLEVERTAP_PASSWORD in your .env file.\n"
                         )
-                except Exception:
-                    pass
+                        wrong_password_seen = True
+                    if not interactive:
+                        context.close()
+                        raise CleverTapAuthError(
+                            "Google rejected login: Wrong password. Please verify CLEVERTAP_PASSWORD."
+                        )
 
-                # If headed and automated login is blocked or taking too long, fallback to manual login
-                if headed:
-                    try:
-                        body_text = page.locator("body").inner_text()
-                        is_blocked = (
-                            "not be secure" in body_text
-                            or "browser or app may not be secure" in body_text
-                        )
-                    except Exception:
-                        is_blocked = False
-
-                    if is_blocked or attempt >= 20:
-                        print("\n" + "=" * 80)
-                        print("[MANUAL FALLBACK DETECTED]")
-                        if is_blocked:
+                # Check if Google explicitly blocked the browser
+                is_blocked = (
+                    "not be secure" in body_text
+                    or "browser or app may not be secure" in body_text
+                )
+                if is_blocked:
+                    if headed and interactive:
+                        if prompt_manual_fallback(blocked=True):
                             print(
-                                "Google blocked automated login ('This browser or app may not be secure')."
+                                "Redirect to CleverTap dashboard detected! Login successful."
                             )
-                        else:
-                            print(
-                                "Automated login is taking longer than expected / requires verification."
-                            )
-                        print(
-                            "Please complete the login/verification manually in the headed browser window."
+                            logged_in = True
+                            break
+                        idle_attempts = 0
+                        continue
+                    else:
+                        context.close()
+                        raise CleverTapAuthError(
+                            "Google blocked automated login ('This browser or app may not be secure')."
                         )
-                        print(
-                            "Once you successfully land on the CleverTap dashboard page,"
-                        )
-                        print("return to this terminal and press ENTER to continue...")
-                        print("=" * 80 + "\n")
-                        try:
-                            input("Press ENTER when you have successfully logged in: ")
-                            curr_url = page.url
-                            if (
-                                "in1.dashboard.clevertap.com" in curr_url
-                                and "google" not in curr_url
-                                and "accounts.youtube" not in curr_url
-                                and "error" not in curr_url.lower()
-                            ):
-                                print(
-                                    "Redirect to CleverTap dashboard detected! Login successful."
-                                )
-                                logged_in = True
-                                break
-                        except (KeyboardInterrupt, SystemExit):
-                            context.close()
-                            raise
 
                 # 1. Click "Continue with Google" on SSO page
                 if "sso.clevertap.com" in curr_url:
@@ -463,6 +509,7 @@ def refresh_clevertap_session(
                         if google_btn.is_visible(timeout=1000):
                             google_btn.click()
                             print("Auto-clicked 'Continue with Google' button.")
+                            progress_made = True
                             page.wait_for_timeout(2000)
                     except Exception:
                         pass
@@ -474,6 +521,7 @@ def refresh_clevertap_session(
                         if account_item.is_visible(timeout=1000):
                             account_item.click()
                             print(f"Auto-clicked Google account chooser item: {email}")
+                            progress_made = True
                             page.wait_for_timeout(2000)
                             continue
                     except Exception:
@@ -489,9 +537,10 @@ def refresh_clevertap_session(
                         email_input.fill("")
                         email_input.press_sequentially(email, delay=100)
                         page.locator(
-                            '#identifierNext, button:has-text("Next"), button:has-text("Siguiente")'
+                            '#identifierNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
                         ).first.click()
                         print("Filled email and clicked next.")
+                        progress_made = True
                         page.wait_for_timeout(2000)
                 except Exception:
                     pass
@@ -499,14 +548,20 @@ def refresh_clevertap_session(
                 # 3. Fill Google Password screen
                 try:
                     pwd_input = page.locator('input[type="password"]').first
-                    if pwd_input.is_visible(timeout=1000) and password and password != "PASTE_YOUR_PASSWORD_HERE":
+                    if (
+                        not wrong_password_seen
+                        and pwd_input.is_visible(timeout=1000)
+                        and password
+                        and password != "PASTE_YOUR_PASSWORD_HERE"
+                    ):
                         pwd_input.click()
                         pwd_input.fill("")
                         pwd_input.press_sequentially(password, delay=100)
                         page.locator(
-                            '#passwordNext, button:has-text("Next"), button:has-text("Siguiente")'
+                            '#passwordNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
                         ).first.click()
                         print("Filled password and clicked next.")
+                        progress_made = True
                         page.wait_for_timeout(2000)
                 except Exception:
                     pass
@@ -521,6 +576,7 @@ def refresh_clevertap_session(
                         if authenticator_option.is_visible(timeout=1000):
                             authenticator_option.click()
                             print("Clicked Authenticator app option.")
+                            progress_made = True
                             page.wait_for_timeout(2000)
                             continue
 
@@ -533,6 +589,7 @@ def refresh_clevertap_session(
                             print(
                                 "Clicked phone option ending in 91 to bypass rate-limited option..."
                             )
+                            progress_made = True
                             page.wait_for_timeout(2000)
                             continue
 
@@ -547,6 +604,7 @@ def refresh_clevertap_session(
                                     "Clicked 'Try another way' to show other verification methods."
                                 )
                                 selection_clicked_try_another = True
+                                progress_made = True
                                 page.wait_for_timeout(2000)
                                 continue
 
@@ -559,6 +617,7 @@ def refresh_clevertap_session(
                             print(
                                 "Only phone option ending in 61 available. Clicked it to proceed..."
                             )
+                            progress_made = True
                             page.wait_for_timeout(2000)
                             continue
                     except Exception as e:
@@ -567,21 +626,32 @@ def refresh_clevertap_session(
                 # 3.8 Handle Google Phone Number Confirmation screen (challenge/ipp/collect)
                 if "challenge/ipp/collect" in curr_url:
                     try:
-                        page_text = page.locator("body").inner_text()
-                        # If Google is asking to confirm the blocked 61 number, click 'Try another way' to go back
-                        if "61" in page_text or "ending in 61" in page_text:
+                        # If Google is asking to confirm the blocked 61 number or we have TOTP, click 'Try another way'
+                        if (
+                            "61" in body_text
+                            or "ending in 61" in body_text
+                            or totp_secret
+                        ) and curr_url not in clicked_try_another_urls:
                             try_another = page.locator(
                                 'button:has-text("Try another way"), a:has-text("Try another way"), div[role="button"]:has-text("Try another way"), span:has-text("Try another way")'
                             ).first
                             if try_another.is_visible(timeout=1000):
                                 try_another.click()
+                                clicked_try_another_urls.add(curr_url)
                                 print(
-                                    "Detected rate-limited 61 confirmation page. Clicked 'Try another way' to return to selection..."
+                                    "Detected phone confirmation page. Clicked 'Try another way' to return to selection..."
                                 )
+                                progress_made = True
                                 page.wait_for_timeout(2000)
                                 continue
                     except Exception as e:
                         print(f"Debug exception in collect block: {e}")
+
+                    if not interactive:
+                        context.close()
+                        raise CleverTapAuthError(
+                            "Google is requesting phone number confirmation, which cannot be completed in non-interactive/CI mode."
+                        )
 
                     print(
                         "\n[ACTION REQUIRED] Google is asking to confirm your registered phone number."
@@ -594,9 +664,11 @@ def refresh_clevertap_session(
 
                 # 4. Fill Google TOTP MFA screen (Authenticator app only)
                 try:
-                    totp_input = page.locator('input[type="tel"], input#totpPin').first
+                    totp_input = page.locator(
+                        'input[type="tel"], input#totpPin, input[name="totpPin"], input[autocomplete="one-time-code"]'
+                    ).first
                     if totp_input.is_visible(timeout=1000):
-                        page_text = page.locator("body").inner_text()
+                        page_text = body_text or page.locator("body").inner_text(timeout=1000)
                         is_sms_page = "challenge/ipp/verify" in curr_url or (
                             "text message" in page_text.lower()
                             and (
@@ -605,13 +677,37 @@ def refresh_clevertap_session(
                             )
                         )
                         if is_sms_page:
+                            if totp_secret and curr_url not in clicked_try_another_urls:
+                                try_another = page.locator(
+                                    'button:has-text("Try another way"), a:has-text("Try another way"), div[role="button"]:has-text("Try another way"), span:has-text("Try another way")'
+                                ).first
+                                if try_another.is_visible(timeout=1000):
+                                    try_another.click()
+                                    clicked_try_another_urls.add(curr_url)
+                                    print(
+                                        "Detected SMS verification page. Clicked 'Try another way' to switch to Authenticator..."
+                                    )
+                                    progress_made = True
+                                    page.wait_for_timeout(2000)
+                                    continue
+
                             print(
                                 "\n[ACTION REQUIRED] Google is forcing SMS verification to your manager's number."
                             )
+                            if not interactive:
+                                context.close()
+                                raise CleverTapAuthError(
+                                    "Google is requiring SMS verification, which cannot be completed in non-interactive/CI mode."
+                                )
                             try:
                                 sms_code = input(
                                     "Please type the 6-digit SMS verification code here: "
                                 ).strip()
+                            except EOFError as e:
+                                context.close()
+                                raise CleverTapAuthError(
+                                    "Cannot read SMS verification code: stdin is not interactive (EOF)."
+                                ) from e
                             except (KeyboardInterrupt, SystemExit):
                                 raise
                             except Exception:
@@ -622,9 +718,10 @@ def refresh_clevertap_session(
                                 totp_input.fill("")
                                 totp_input.press_sequentially(sms_code, delay=100)
                                 page.locator(
-                                    '#totpNext, button:has-text("Next"), button:has-text("Siguiente")'
+                                    '#totpNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
                                 ).first.click()
                                 print("Submitted manually entered SMS code.")
+                                progress_made = True
                                 page.wait_for_timeout(3000)
                             continue
 
@@ -636,19 +733,68 @@ def refresh_clevertap_session(
                                 totp_input.fill("")
                                 totp_input.press_sequentially(code, delay=100)
                                 page.locator(
-                                    '#totpNext, button:has-text("Next"), button:has-text("Siguiente")'
+                                    '#totpNext:visible, button:has-text("Next"):visible, button:has-text("Siguiente"):visible'
                                 ).first.click()
                                 print(f"Filled TOTP MFA code: {code} and clicked next.")
+                                progress_made = True
                                 page.wait_for_timeout(2000)
+                        elif not interactive:
+                            context.close()
+                            raise CleverTapAuthError(
+                                "Google is requesting TOTP MFA, but CLEVERTAP_TOTP_SECRET is not configured."
+                            )
+                except CleverTapAuthError:
+                    raise
                 except Exception:
                     pass
 
+                # 4.5 If Google landed on another challenge (e.g. phone prompt/passkey) and TOTP is configured, try another way
+                if (
+                    totp_secret
+                    and "accounts.google.com" in curr_url
+                    and "challenge/" in curr_url
+                    and "challenge/pwd" not in curr_url
+                    and "challenge/totp" not in curr_url
+                    and "challenge/selection" not in curr_url
+                    and "challenge/ipp/" not in curr_url
+                    and curr_url not in clicked_try_another_urls
+                ):
+                    try:
+                        try_another = page.locator(
+                            'button:has-text("Try another way"), a:has-text("Try another way"), div[role="button"]:has-text("Try another way"), span:has-text("Try another way")'
+                        ).first
+                        if try_another.is_visible(timeout=1000):
+                            try_another.click()
+                            clicked_try_another_urls.add(curr_url)
+                            print(
+                                "Clicked 'Try another way' on Google challenge page to reach Authenticator."
+                            )
+                            progress_made = True
+                            page.wait_for_timeout(2000)
+                            continue
+                    except Exception:
+                        pass
+
+                if progress_made:
+                    idle_attempts = 0
+                else:
+                    idle_attempts += 1
+
+                if headed and interactive and idle_attempts >= 20:
+                    if prompt_manual_fallback(blocked=False):
+                        print(
+                            "Redirect to CleverTap dashboard detected! Login successful."
+                        )
+                        logged_in = True
+                        break
+                    idle_attempts = 0
+
             if not logged_in:
+                final_url = page.url
                 context.close()
                 raise CleverTapAuthError(
-                    "SSO login automation timed out. Please run with --headed and verify credentials in .env."
+                    f"SSO login automation timed out at URL: {final_url}. Please run with --headed and verify credentials in .env."
                 )
-
         page.wait_for_timeout(3000)
         cookies = context.cookies()
 
