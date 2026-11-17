@@ -14,7 +14,7 @@ active_process = None
 active_process_lock = asyncio.Lock()
 
 NODE_COUNTS = {
-    "Day0": 47,
+    "Day0": 46,
     "Day5": 48,
     "Day15": 47,
     "WhatsApp": 13,
