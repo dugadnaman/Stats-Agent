@@ -113,20 +113,24 @@
       14542
     ],
     [
+      "WA_Kensville_Day0",
+      15054
+    ],
+    [
       "WA_Netrang_Day0",
-      13979
+      15067
     ],
     [
       "WA_Bharatpur_Day0",
-      13992
+      15080
     ],
     [
       "WA_Derby Green-Ooty_Day0",
-      14005
+      15093
     ],
     [
       "WA_Dharamshala_Day0",
-      14018
+      15106
     ],
     [
       "WA_Le Vintuna Gangtok_Day0",
@@ -163,26 +167,6 @@
     [
       "Day0_NatureResortJaipur",
       14665
-    ],
-    [
-      "WA_Kensville_Day0",
-      15054
-    ],
-    [
-      "WA_Netrang_Day0",
-      15067
-    ],
-    [
-      "WA_Bharatpur_Day0",
-      15080
-    ],
-    [
-      "WA_Derby Green-Ooty_Day0",
-      15093
-    ],
-    [
-      "WA_Dharamshala_Day0",
-      15106
     ]
   ],
   "Day5": [
@@ -494,23 +478,23 @@
     ],
     [
       "WA_Kensville_Day15",
-      14325
+      15206
     ],
     [
       "WA_Netrang_Day15",
-      14338
+      15219
     ],
     [
       "WA_Bharatpur_Day15",
-      14351
+      15232
     ],
     [
       "WA_Derby Green-Ooty_Day15",
-      14364
+      15245
     ],
     [
       "WA_Dharamshala_Day15",
-      14377
+      15258
     ],
     [
       "WA_Le Vintuna Gangtok_Day15",
@@ -547,26 +531,6 @@
     [
       "WA_NatureResortJaipur_Day15",
       14762
-    ],
-    [
-      "WA_Kensville_Day15",
-      15206
-    ],
-    [
-      "WA_Netrang_Day15",
-      15219
-    ],
-    [
-      "WA_Bharatpur_Day15",
-      15232
-    ],
-    [
-      "WA_Derby Green-Ooty_Day15",
-      15245
-    ],
-    [
-      "WA_Dharamshala_Day15",
-      15258
     ]
   ]
 }
